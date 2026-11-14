@@ -1,0 +1,11 @@
+{
+  "name": "plantao-control",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gerenciador de plantão administrativo hospitalar (PWA estático)",
+  "scripts": {
+    "start": "node tests/serve.mjs 5173",
+    "test": "node --test tests/unit.test.mjs"
+  }
+}

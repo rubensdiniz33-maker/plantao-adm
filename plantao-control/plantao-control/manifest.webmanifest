@@ -1,6 +1,6 @@
 {
-  "name": "Plantão Control",
-  "short_name": "Plantão",
+  "name": "Plantão ADM",
+  "short_name": "Plantão ADM",
   "description": "Gerenciador de plantão administrativo hospitalar",
   "lang": "pt-BR",
   "start_url": "./",

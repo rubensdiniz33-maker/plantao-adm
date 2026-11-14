@@ -133,7 +133,7 @@ export async function renderPages(shift) {
       ctx.fillStyle = C.green; ctx.fillRect(W * 0.5, 0, W * 0.5, 14);
       ctx.fillStyle = C.red;
       ctx.font = `800 22px ${FONT}`;
-      ctx.fillText('PLANTÃO CONTROL', M, 84);
+      ctx.fillText('PLANTÃO ADM', M, 84);
       ctx.fillStyle = C.text;
       ctx.font = `700 44px ${FONT}`;
       const tl = wrapLines(ctx, header.title, W - 2 * M);
@@ -252,7 +252,7 @@ export async function renderPages(shift) {
     const c = cv.getContext('2d');
     c.fillStyle = C.muted;
     c.font = `500 20px ${FONT}`;
-    c.fillText('Plantão Control', M, H - 30);
+    c.fillText('Plantão ADM', M, H - 30);
     const t = `Página ${i + 1}/${pages.length}`;
     c.fillText(t, W - M - c.measureText(t).width, H - 30);
   });

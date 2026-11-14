@@ -45,7 +45,7 @@ const YN_TEXT = { sim: 'Sim', nao: 'Não' };
 
 // Valor de exibição de um campo: { text, kind } — kind: 'sim'|'nao'|'na'|'ni'|'val'
 export function displayValue(field, v) {
-  if (!isAnswered(v)) return { text: 'Não informado', kind: 'ni' };
+  if (!isAnswered(v)) return { text: '-', kind: 'ni' };
   if (v === NA) return { text: 'Não se aplica', kind: 'na' };
   if (field.type === 'yn') return { text: YN_TEXT[v], kind: v };
   return { text: String(v).trim(), kind: 'val' };
@@ -81,7 +81,7 @@ export function reportHeader(shift) {
   };
 }
 
-// Texto para WhatsApp: SEM linhas em branco. Perguntas e títulos em *negrito*; "Não informado" em _itálico_.
+// Texto para WhatsApp: SEM linhas em branco. Perguntas e títulos em *negrito*; campo vazio = "-".
 export function reportText(shift) {
   const h = reportHeader(shift);
   const lines = [
@@ -95,7 +95,7 @@ export function reportText(shift) {
     for (const r of sec.rows) {
       const pre = r.indent ? '   ◦ ' : '• ';
       const lab = `*${r.label}${r.label.endsWith('?') ? '' : ':'}*`;
-      if (r.kind === 'ni') lines.push(`${pre}${lab} _Não informado_`);
+      if (r.kind === 'ni') lines.push(`${pre}${lab} -`);
       else if (r.kind === 'val' && r.text.includes('\n')) {
         lines.push(`${pre}${lab}`);
         for (const l of r.text.split('\n')) if (l.trim()) lines.push(`      ${l.trim()}`);
@@ -133,4 +133,13 @@ export function whatsappToHtml(textValue) {
   return esc
     .replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(>])_([^_\n]+)_(?=$|[\s).,;:<])/g, '$1<em>$2</em>');
+}
+
+// Texto final do relatório: a versão editada à mão (se houver) ou o texto gerado.
+// reportEdit = { text, base } — base é o texto gerado no momento da edição; se os dados mudarem depois, a edição fica "desatualizada".
+export function finalReportText(shift) {
+  const auto = reportText(shift);
+  const e = shift.reportEdit;
+  if (e && typeof e.text === 'string' && e.text.trim()) return { text: e.text, auto, edited: true, stale: e.base !== auto };
+  return { text: auto, auto, edited: false, stale: false };
 }

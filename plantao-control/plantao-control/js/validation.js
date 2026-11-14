@@ -109,6 +109,9 @@ export function normalizeShift(raw) {
     finalizedBy: status === 'finalizado' && typeof raw.finalizedBy === 'string' ? cleanName(raw.finalizedBy) : null,
     answers: sanitizeAnswers(raw.answers),
     sectorMeta,
+    reportEdit: raw.reportEdit && typeof raw.reportEdit.text === 'string' && raw.reportEdit.text.trim()
+      ? { text: raw.reportEdit.text.slice(0, 20000), base: typeof raw.reportEdit.base === 'string' ? raw.reportEdit.base.slice(0, 20000) : '' }
+      : null,
     activity,
   };
 }
@@ -123,7 +126,7 @@ export function parseBackup(textContent) {
   } catch {
     throw new Error('O arquivo não é um backup válido (JSON corrompido).');
   }
-  if (!data || typeof data !== 'object' || data.app !== APP_ID) throw new Error('Este arquivo não é um backup do Plantão Control.');
+  if (!data || typeof data !== 'object' || data.app !== APP_ID) throw new Error('Este arquivo não é um backup do Plantão ADM.');
   if (data.schema !== SCHEMA) throw new Error('Versão de backup não suportada.');
   if (!Array.isArray(data.shifts)) throw new Error('O backup não contém a lista de plantões.');
   const shifts = [];

@@ -1,4 +1,4 @@
-// PLANTÃO CONTROL — interface, rotas e fluxo do plantão.
+// PLANTÃO ADM — interface, rotas e fluxo do plantão.
 import * as storage from './storage.js';
 import {
   SECTORS, SECTOR_BY_ID, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts,
@@ -8,7 +8,7 @@ import {
   MAX_ACTIVITY, validateIdentification, cleanName, normalizeShift, parseBackup, buildBackup,
 } from './validation.js';
 import {
-  openingMessage, reportText, missingList, alertsList, whatsappToHtml, formatDateBR, hoursText, shiftName, joinNames,
+  openingMessage, reportText, finalReportText, missingList, alertsList, whatsappToHtml, formatDateBR, hoursText, shiftName, joinNames,
 } from './report.js';
 import { copyText, shareWhatsApp, buildPngs, buildPdf, downloadBlob, shareFiles } from './export.js';
 import {
@@ -32,18 +32,23 @@ function setSave(st, err) {
 }
 
 function paintBadge(b, flash) {
-  b.className = `savebadge ${save.state}`;
+  const compact = b.classList.contains('compact');
+  b.className = `savebadge ${save.state}${compact ? ' compact' : ''}`;
   b.replaceChildren();
-  if (save.state === 'saving') b.append('Salvando…');
+  const full = { saving: 'Salvando…', saved: save.at ? `Salvo ${pad2(save.at.getHours())}:${pad2(save.at.getMinutes())}` : 'Salvo', volatile: 'Não salvo (sem armazenamento)', error: 'Erro ao salvar · tentar de novo' }[save.state];
+  b.setAttribute('aria-label', full);
+  b.title = full;
+  if (save.state === 'saving') b.append(compact ? icon('refresh') : 'Salvando…');
   else if (save.state === 'saved') {
-    b.append(icon('check'), save.at ? `Salvo ${pad2(save.at.getHours())}:${pad2(save.at.getMinutes())}` : 'Salvo');
+    b.append(icon('check'));
+    if (!compact) b.append(full);
     if (flash) { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
   } else if (save.state === 'volatile') b.append(icon('alert'), 'Não salvo (sem armazenamento)');
   else b.append(icon('alert'), 'Erro ao salvar · tentar de novo');
 }
 
-function saveBadge() {
-  const b = h('button', { class: 'savebadge', type: 'button', 'aria-live': 'polite', onclick: () => { if (save.state === 'error') flush(); } });
+function saveBadge(compact = false) {
+  const b = h('button', { class: `savebadge${compact ? ' compact' : ''}`, type: 'button', 'aria-live': 'polite', onclick: () => { if (save.state === 'error') flush(); } });
   badges.add(b);
   paintBadge(b, false);
   return b;
@@ -176,19 +181,10 @@ function screenHome(shifts) {
     h('div', { class: 'brandrow' },
       h('div', { class: 'logo' }, icon('logo')),
       h('div', null,
-        h('h1', { class: 'brand' }, 'PLANTÃO ', h('span', null, 'CONTROL')),
+        h('h1', { class: 'brand' }, 'PLANTÃO ', h('span', null, 'ADM')),
         h('div', { class: 'datehero' }, longDate()))),
     storageBanner(),
   ];
-  if (active) {
-    const sm = shiftSummary(active);
-    children.push(h('div', { class: 'card active-card stack' },
-      h('div', { class: 'eyebrow' }, 'Plantão em andamento'),
-      h('div', null, h('h2', null, shiftTitle(active)), h('div', { class: 'meta' }, `${hoursText(active)} · ${joinNames(active.nurses)}`)),
-      h('div', { class: 'meta' }, `${sm.done}/${sm.total} setores preenchidos${sm.review ? ` · ${sm.review} para revisar` : ''}${sm.alerts ? ` · ${sm.alerts} com ocorrência` : ''}`),
-      h('a', { class: 'btn primary lg block', href: `#/p/${active.id}`, id: 'btn-resume' }, icon('play'), 'RETOMAR PLANTÃO')));
-  }
-
   const startNew = async () => {
     if (active) {
       const choice = await dialog({
@@ -217,19 +213,23 @@ function screenHome(shifts) {
     else if (c === 'blank') go('#/novo');
   };
 
-  children.push(h('div', { class: 'stack' },
-    h('button', { class: `btn ${active ? 'secondary' : 'primary'} lg block`, type: 'button', id: 'btn-start', onclick: startNew }, icon('plus'), 'INICIAR PLANTÃO')));
-  if (last) {
-    children.push(h('div', { class: 'card lastcard stack', id: 'last-card' },
-      h('div', { class: 'eyebrow' }, 'Último plantão'),
+  children.push(h('div', { class: 'herozone' },
+    h('button', { class: 'btn primary hero block', type: 'button', id: 'btn-start', onclick: startNew }, icon('plus'), 'INICIAR PLANTÃO'),
+    active
+      ? h('a', { class: 'resume', href: `#/p/${active.id}`, id: 'btn-resume' }, icon('play'),
+        h('span', { class: 'ell' }, `Retomar plantão em andamento · ${shiftTitle(active)}`))
+      : null));
+  const links = [];
+  if (last) links.push(h('button', { class: 'linkbtn', type: 'button', id: 'btn-last', onclick: () => {
+    let sh;
+    sh = sheet({ title: 'Último plantão', body: h('div', { class: 'stack' },
       h('div', null, h('h3', null, shiftTitle(last)), h('div', { class: 'meta' }, `${hoursText(last)} · ${joinNames(last.nurses)}`)),
       h('div', { class: 'row' },
-        h('a', { class: 'btn secondary small', href: `#/p/${last.id}/relatorio`, id: 'btn-last-report' }, icon('file'), 'Relatório'),
-        h('a', { class: 'btn secondary small', href: `#/p/${last.id}`, id: 'btn-last-open' }, icon('edit'), 'Editar'))));
-  }
-  children.push(h('div', { class: 'spacer' }));
-  children.push(h('button', { class: 'btn ghost small', type: 'button', id: 'btn-backup', onclick: () => openBackupSheet() }, icon('download'), 'Backup dos dados'));
-  children.push(h('p', { class: 'note' }, 'Os dados ficam armazenados neste dispositivo e neste navegador. Não há sincronização entre dispositivos.'));
+        h('a', { class: 'btn secondary', href: `#/p/${last.id}/relatorio`, id: 'btn-last-report', onclick: () => sh.close() }, icon('file'), 'Relatório'),
+        h('a', { class: 'btn secondary', href: `#/p/${last.id}`, id: 'btn-last-open', onclick: () => sh.close() }, icon('edit'), 'Editar'))) });
+  } }, icon('clock'), 'Último plantão'));
+  links.push(h('button', { class: 'linkbtn', type: 'button', id: 'btn-backup', onclick: () => openBackupSheet() }, icon('download'), 'Backup'));
+  children.push(h('div', { class: 'spacer' }), h('div', { class: 'linkrow' }, links));
   mount(h('main', { class: 'screen home' }, children));
 }
 
@@ -272,7 +272,7 @@ function openBackupSheet() {
         try {
           const all = await storage.listShifts();
           if (!all.length) { toast('Não há plantões para exportar.', 'error'); return; }
-          downloadBlob(new Blob([buildBackup(all)], { type: 'application/json' }), `plantao-control-backup-${todayISO()}.json`);
+          downloadBlob(new Blob([buildBackup(all)], { type: 'application/json' }), `plantao-adm-backup-${todayISO()}.json`);
           toast('Backup exportado', 'ok');
         } catch { toast('Não foi possível exportar o backup.', 'error'); }
       } }, icon('download'), 'Exportar'),
@@ -609,9 +609,9 @@ function buildField(f, answers, onChange) {
   const paintState = () => {
     const v = answers[f.id];
     let t;
-    if (!isAnswered(v)) t = f.optional ? 'opcional' : 'Não informado';
+    if (!isAnswered(v)) t = f.optional ? 'opcional' : '';
     else if (v === NA) t = 'Não se aplica';
-    else t = 'Informado';
+    else t = '';
     stateEl.textContent = t;
     wrap.classList.toggle('answered', isAnswered(v));
   };
@@ -652,25 +652,18 @@ function screenSector(shift, sector) {
   const answers = shift.answers[sector.id] || (shift.answers[sector.id] = {});
   const stLabel = h('span', { class: 'sub', id: 'sector-status' });
   const items = [];
-  const alertBox = h('div', { class: 'banner warn', hidden: true, id: 'sector-alerts' });
+  const alertBox = h('div', { class: 'inlinenote warn', hidden: true, id: 'sector-alerts' });
   const carried = () => !!shift.sectorMeta[sector.id]?.carried;
-  const reviewNote = h('div', { class: 'banner info', id: 'review-note', hidden: !carried() }, icon('refresh'),
-    h('div', null, h('b', null, 'Informações do plantão anterior. '), 'Confira, altere o que mudou e toque em Confirmar.'));
+  const reviewNote = h('div', { class: 'inlinenote', id: 'review-note', hidden: !carried() },
+    'Dados do plantão anterior: confira, altere o que mudou e toque em Confirmar e seguir.');
 
   sess = { shift, sector, dirty: false, startedLogged: false };
 
-  // faixa de progresso fixa + contador
+  // posição no fluxo (ex.: 9/13) e filete fino de progresso por posição
   const fill = h('i');
-  const stripLabel = h('span', { class: 'striplabel', id: 'strip-label' });
-  const selCount = h('span', { id: 'sel-count' });
-  const bar = h('div', { class: 'pbar thin', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(SECTORS.length) }, fill);
-  const updateStrip = () => {
-    const sm = shiftSummary(shift);
-    stripLabel.textContent = `${sm.done} de ${sm.total} preenchidos${sm.review ? ` · ${sm.review} p/ revisar` : ''}`;
-    selCount.textContent = `${sm.done}/${sm.total}`;
-    bar.setAttribute('aria-valuenow', String(sm.done));
-    requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${(sm.done / sm.total) * 100}%`; }));
-  };
+  const selCount = h('span', { id: 'sel-count' }, `${idx + 1}/${SECTORS.length}`);
+  const bar = h('div', { class: 'pbar thin', role: 'progressbar', 'aria-valuemin': '1', 'aria-valuemax': String(SECTORS.length), 'aria-valuenow': String(idx + 1) }, fill);
+  const updateStrip = () => { requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${((idx + 1) / SECTORS.length) * 100}%`; })); };
 
   const confirmBtn = h('button', { class: 'btn green', type: 'button', id: 'btn-confirm-sector', hidden: !carried(), onclick: () => {
     const meta = shift.sectorMeta[sector.id];
@@ -684,9 +677,11 @@ function screenSector(shift, sector) {
     refreshAll();
     goNext();
   } }, icon('check'), 'Confirmar e seguir');
-  const nextBtn = h('button', { class: 'btn primary', type: 'button', id: 'btn-next-sector', hidden: carried(), onclick: () => goNext() }, 'Próximo', icon('right'));
+  const isLast = idx === SECTORS.length - 1;
+  const nextBtn = h('button', { class: 'btn primary', type: 'button', id: 'btn-next-sector', hidden: carried(), onclick: () => goNext() }, isLast ? 'Ver relatório' : 'Próximo', icon('right'));
+  // Sequencial: avança para o setor seguinte; depois do último, abre o relatório (sem voltar ao início).
   function goNext() {
-    const n = nextAttention(shift, idx);
+    const n = SECTORS[idx + 1];
     go(n ? `#/p/${shift.id}/s/${n.id}` : `#/p/${shift.id}/relatorio`);
   }
 
@@ -694,10 +689,10 @@ function screenSector(shift, sector) {
     for (const it of items) it.el.hidden = !conditionMet(it.f.showIf, answers);
     const prog = sectorProgress(sector, answers);
     const c = carried();
-    stLabel.textContent = c ? 'Revisar informações' : { none: 'Não iniciado', progress: `Em preenchimento · ${prog.missing.length} pendente(s)`, done: 'Preenchido' }[prog.status];
+    stLabel.textContent = c ? 'Revisar informações' : { none: 'Não iniciado', progress: `${prog.missing.length} pendente(s)`, done: 'Preenchido' }[prog.status];
     const al = sectorAlerts(sector, answers);
     alertBox.hidden = al.length === 0;
-    alertBox.replaceChildren(icon('alert'), h('div', null, h('b', null, 'Ocorrência: '), al.join(' · ')));
+    alertBox.replaceChildren(icon('alert'), h('span', null, h('b', null, 'Ocorrência: '), al.join(' · ')));
     reviewNote.hidden = !c;
     confirmBtn.hidden = !c;
     nextBtn.hidden = c;
@@ -729,14 +724,15 @@ function screenSector(shift, sector) {
     h('div', { class: 'stickyhead' },
       h('header', { class: 'topbar' },
         h('a', { class: 'iconbtn', href: `#/p/${shift.id}`, 'aria-label': 'Voltar ao painel', id: 'btn-back-panel' }, icon('back')),
-        h('h1', null, `${idx + 1}. ${sector.title}`, stLabel),
+        h('h1', null, sector.title, stLabel),
+        saveBadge(true),
         h('button', { class: 'selbtn', type: 'button', id: 'btn-sectors', 'aria-label': 'Escolher outro setor', onclick: () => openSectorSheet(shift, sector.id) }, icon('grid'), selCount)),
-      h('div', { class: 'strip' }, h('div', { class: 'striprow' }, stripLabel, saveBadge()), bar)),
-    h('div', { class: 'content' },
+      bar),
+    h('div', { class: 'content tight' },
       storageBanner(),
+      items.map((it) => it.el),
       reviewNote,
       alertBox,
-      items.map((it) => it.el),
       h('p', { class: 'note' }, 'Não registre nomes de pacientes nem outros dados pessoais identificáveis.')),
     h('div', { class: 'actionbar' },
       prev
@@ -751,27 +747,78 @@ function screenSector(shift, sector) {
 // Relatório
 // =====================================================================
 function screenReport(shift) {
-  const text = reportText(shift);
+  const fr = finalReportText(shift);
+  const auto = fr.auto;
   const miss = missingList(shift);
   const alerts = alertsList(shift);
   const reviewCount = miss.filter((m) => m.status === 'review').length;
   const totalMissing = miss.filter((m) => m.status !== 'review').reduce((n, m) => n + m.labels.length, 0);
   const imgBox = h('div', { class: 'imgpages' });
   let urls = [];
-  const previewEl = h('div', { class: 'preview', id: 'report-preview', html: whatsappToHtml(text) });
+
+  // Editor do texto final: o enfermeiro revisa e pode digitar alterações; o que ele escreve é o que Copiar/WhatsApp enviam.
+  const editor = h('textarea', { class: 'textarea reporttext', id: 'report-text', spellcheck: 'false', autocapitalize: 'off', 'aria-label': 'Texto do relatório (editável)' });
+  editor.value = fr.text;
+  const previewEl = h('div', { class: 'preview', id: 'report-preview', hidden: true });
   attachWaCopy(previewEl);
+  const getText = () => editor.value;
+  const grow = () => { editor.style.height = 'auto'; editor.style.height = `${Math.max(240, editor.scrollHeight + 4)}px`; };
+  const editBadge = h('span', { class: 'editedtag', id: 'edited-tag', hidden: true }, 'Editado');
+  const staleBox = h('div', { class: 'banner warn', id: 'stale-box', hidden: true }, icon('alert'),
+    h('div', { class: 'grow1' }, 'Os dados dos setores mudaram depois da sua edição. O texto abaixo é a sua versão editada.',
+      h('div', { class: 'row', style: 'margin-top:8px' },
+        h('button', { class: 'btn secondary small', type: 'button', id: 'btn-regen', onclick: () => { resetEdit(); toast('Texto atualizado com os dados atuais', 'ok'); } }, icon('refresh'), 'Usar dados atuais (descarta edição)'))));
+  const restoreBtn = h('button', { class: 'linkbtn', type: 'button', id: 'btn-restore', hidden: true, onclick: async () => {
+    if (await confirmDialog({ title: 'Restaurar texto original?', message: 'Suas alterações manuais neste relatório serão descartadas e o texto voltará a ser gerado a partir dos setores.', confirmText: 'Restaurar' })) { resetEdit(); toast('Texto original restaurado', 'ok'); }
+  } }, icon('refresh'), 'Restaurar texto original');
+  const paintEdit = () => {
+    const edited = !!shift.reportEdit;
+    editBadge.hidden = !edited;
+    restoreBtn.hidden = !edited;
+    staleBox.hidden = !(edited && shift.reportEdit.base !== auto);
+  };
+  function resetEdit() {
+    shift.reportEdit = null;
+    editor.value = auto;
+    grow();
+    touch(shift);
+    paintEdit();
+    if (!previewEl.hidden) previewEl.innerHTML = whatsappToHtml(getText());
+  }
+  editor.addEventListener('input', () => {
+    grow();
+    const v = editor.value;
+    shift.reportEdit = (v === auto || !v.trim()) ? null : { text: v, base: auto };
+    touch(shift);
+    paintEdit();
+  });
+
+  const tabEdit = h('button', { class: 'tab on', type: 'button', id: 'tab-edit', role: 'tab', 'aria-selected': 'true' }, icon('edit'), 'Editar texto');
+  const tabFmt = h('button', { class: 'tab', type: 'button', id: 'tab-fmt', role: 'tab', 'aria-selected': 'false' }, icon('check'), 'Como fica no WhatsApp');
+  const setTab = (fmt) => {
+    tabEdit.classList.toggle('on', !fmt); tabFmt.classList.toggle('on', fmt);
+    tabEdit.setAttribute('aria-selected', String(!fmt)); tabFmt.setAttribute('aria-selected', String(fmt));
+    editor.hidden = fmt; previewEl.hidden = !fmt;
+    if (fmt) previewEl.innerHTML = whatsappToHtml(getText()); else grow();
+  };
+  tabEdit.onclick = () => setTab(false);
+  tabFmt.onclick = () => setTab(true);
 
   const busy = (btn, on) => { btn.disabled = on; };
 
-  const btnCopy = h('button', { class: 'btn primary', type: 'button', id: 'btn-copy-report', onclick: async () => {
-    toast((await copyText(text)) ? 'Relatório copiado para a área de transferência' : 'Não foi possível copiar. Selecione o texto da prévia manualmente.', 'ok');
-  } }, icon('copy'), 'Copiar relatório');
+  const btnCopy = h('button', { class: 'btn primary lg', type: 'button', id: 'btn-copy-report', onclick: async () => {
+    const t = getText();
+    if (!t.trim()) { toast('O relatório está vazio.', 'error'); return; }
+    toast((await copyText(t)) ? 'Relatório copiado. Cole no WhatsApp.' : 'Não foi possível copiar. Selecione o texto e copie manualmente.', 'ok');
+  } }, icon('copy'), 'Copiar');
 
-  const btnWa = h('button', { class: 'btn secondary', type: 'button', id: 'btn-wa-report', onclick: async () => {
-    const r = await shareWhatsApp(text);
+  const btnWa = h('button', { class: 'btn wa lg', type: 'button', id: 'btn-wa-report', onclick: async () => {
+    const t = getText();
+    if (!t.trim()) { toast('O relatório está vazio.', 'error'); return; }
+    const r = await shareWhatsApp(t);
     if (r === 'long') toast('Relatório extenso: o texto foi copiado. Cole na conversa do WhatsApp.', 'ok');
-    else if (r === 'fail') toast('Não foi possível abrir o WhatsApp. Use "Copiar relatório".', 'error');
-  } }, icon('share'), 'WhatsApp');
+    else if (r === 'fail') toast('Não foi possível abrir o WhatsApp. Use "Copiar".', 'error');
+  } }, icon('share'), 'Enviar no WhatsApp');
 
   const fileBase = `plantao-${shift.date}-${shift.type}`;
 
@@ -815,9 +862,9 @@ function screenReport(shift) {
       alerts.length
         ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${alerts.length} setor(es) com ocorrência: `), alerts.map((a) => a.title).join(', ')))
         : h('p', null, 'Nenhuma ocorrência operacional registrada.'),
-      reviewCount ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e sairão como "Não informado" no relatório.')) : null,
+      reviewCount ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e ficarão com "-" no relatório.')) : null,
       totalMissing
-        ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${totalMissing} campo(s) não informado(s) `), `em ${miss.length} setor(es). O relatório será finalizado como parcial, com esses campos marcados como "Não informado".`))
+        ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${totalMissing} campo(s) não informado(s) `), `em ${miss.length} setor(es). O relatório será finalizado como parcial; esses campos ficam com "-".`))
         : h('p', null, 'Todos os campos foram informados.'),
       h('div', { class: 'field' }, h('label', { for: 'finalize-by' }, 'Finalização confirmada por'), sel),
       h('p', null, 'Depois de finalizar, ainda é possível corrigir os setores e gerar o relatório de novo.'));
@@ -841,7 +888,7 @@ function screenReport(shift) {
     h('div', { class: 'content' },
       storageBanner(),
       reviewCount
-        ? h('div', { class: 'banner warn', id: 'review-warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e saem como "Não informado" neste relatório. Abra o painel e confirme cada setor.'))
+        ? h('div', { class: 'banner warn', id: 'review-warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e saem com "-" neste relatório. Abra o painel e confirme cada setor.'))
         : null,
       shift.status === 'finalizado'
         ? h('div', { class: 'banner warn', id: 'final-banner' }, icon('flag'), h('div', null, `Finalizado em ${dateTimeBR(shift.finalizedAt)}${shift.finalizedBy ? ` · confirmado por ${shift.finalizedBy}` : ''}.`))
@@ -854,15 +901,24 @@ function screenReport(shift) {
       alerts.length
         ? h('div', { class: 'banner warn', id: 'alerts-box' }, icon('alert'), h('div', null, h('b', null, 'Ocorrências: '), alerts.map((a) => `${a.title} (${a.alerts.join(', ')})`).join(' · ')))
         : null,
-      h('div', { class: 'sectiontitle' }, 'Prévia do relatório'),
+      staleBox,
+      h('div', { class: 'tabs', role: 'tablist' }, tabEdit, tabFmt, editBadge),
+      editor,
       previewEl,
-      h('div', { class: 'outputs' }, btnCopy, btnWa, btnImg, btnPdf),
-      imgBox,
-      h('p', { class: 'note' }, 'O WhatsApp abre para você escolher a conversa; o aplicativo não envia a mensagem sozinho.')),
-    shift.status === 'em_andamento'
-      ? h('div', { class: 'actionbar' }, h('button', { class: 'btn green lg', type: 'button', id: 'btn-finalize', onclick: finalize }, icon('flag'), 'Finalizar plantão'))
-      : null);
+      h('div', { class: 'editfoot' }, restoreBtn, h('span', { class: 'note' }, 'Revise e altere o texto se precisar. Copiar e WhatsApp enviam exatamente o que está aqui.')),
+      shift.status === 'em_andamento'
+        ? h('button', { class: 'btn green block', type: 'button', id: 'btn-finalize', onclick: finalize }, icon('flag'), 'Finalizar plantão')
+        : null,
+      h('details', { class: 'more', id: 'more-formats' },
+        h('summary', null, h('span', null, 'Outros formatos (imagem e PDF)'), icon('chevron')),
+        h('div', { class: 'stack' },
+          h('div', { class: 'outputs' }, btnImg, btnPdf),
+          h('p', { class: 'note' }, 'Imagem e PDF seguem os dados dos setores e não incluem alterações digitadas no texto.'))),
+      imgBox),
+    h('div', { class: 'actionbar cta' }, btnCopy, btnWa));
   mount(screen);
+  paintEdit();
+  requestAnimationFrame(grow);
 }
 
 // =====================================================================

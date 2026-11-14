@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SECTORS, NA, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary, sectorStatus, nextAttention, effectiveAnswers } from '../js/sectors.js';
-import { openingMessage, reportText, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
+import { finalReportText, openingMessage, reportText, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
 import { normalizeShift, parseBackup, buildBackup, validateIdentification, isValidDate, sanitizeAnswers } from '../js/validation.js';
 
 const baseShift = (over = {}) => ({
@@ -65,7 +65,7 @@ test('zero é resposta válida; vazio nunca vira zero/Não', () => {
   const sh = baseShift({ answers: { enf_sus: { leitos: '0' } } });
   const sec = reportModel(sh).find((s) => s.id === 'enf_sus');
   assert.equal(sec.rows.find((r) => r.label === 'Leitos disponíveis').text, '0');
-  assert.equal(sec.rows.find((r) => r.label === 'Pacientes em diálise').text, 'Não informado');
+  assert.equal(sec.rows.find((r) => r.label === 'Pacientes em diálise').text, '-');
 });
 
 test('preenchimento x ocorrência são independentes (setor preenchido com ocorrência)', () => {
@@ -84,7 +84,7 @@ test('N/A conta como respondido e é diferente de Não informado', () => {
   const sh = baseShift({ answers: { rouparia: { enxoval_suficiente: NA } } });
   const rows = reportModel(sh).find((s) => s.id === 'rouparia').rows;
   assert.equal(rows[0].text, 'Não se aplica');
-  assert.equal(rows[1].text, 'Não informado');
+  assert.equal(rows[1].text, '-');
 });
 
 test('texto neutro ("nenhuma", "0") não gera ocorrência', () => {
@@ -115,8 +115,8 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
     last = pos;
   });
   // vazio: cada pergunta visível aparece como Não informado
-  assert.ok(text.includes('• *Equipe completa?* _Não informado_'));
-  assert.ok(text.includes('• *Leitos bloqueados/interditados:* _Não informado_'));
+  assert.ok(text.includes('• *Equipe completa?* -'));
+  assert.ok(text.includes('• *Leitos bloqueados/interditados:* -'));
   assert.ok(!text.includes('\n\n'), 'relatório sem linhas em branco');
   assert.ok(!/^\s+$/m.test(text));
   // nada de dados fixos do exemplo vazando
@@ -162,8 +162,8 @@ test('pendências listam o que falta sem preencher artificialmente', () => {
 });
 
 test('prévia: escapa HTML e converte negrito', () => {
-  assert.equal(whatsappToHtml('*Sim* <b>x</b> & _Não informado_'), '<strong>Sim</strong> &lt;b&gt;x&lt;/b&gt; &amp; <em>Não informado</em>');
-  assert.equal(whatsappToHtml('• *Equipe completa?* _Não informado_'), '• <strong>Equipe completa?</strong> <em>Não informado</em>');
+  assert.equal(whatsappToHtml('*Sim* <b>x</b> & _itálico_'), '<strong>Sim</strong> &lt;b&gt;x&lt;/b&gt; &amp; <em>itálico</em>');
+  assert.equal(whatsappToHtml('• *Equipe completa?* -'), '• <strong>Equipe completa?</strong> -');
 });
 
 test('validação de identificação', () => {
@@ -235,7 +235,7 @@ test('setor copiado do plantão anterior: estado "revisar", fora do relatório a
   assert.equal(sum.done, 0);
   assert.equal(sum.alerts, 0, 'ocorrência antiga não conta até confirmar');
   const t = reportText(sh);
-  assert.ok(t.includes('• *Equipe completa?* _Não informado_'), 'dado não confirmado não vai para o relatório');
+  assert.ok(t.includes('• *Equipe completa?* -'), 'dado não confirmado não vai para o relatório');
   assert.ok(missingList(sh).find((m) => m.id === 'portaria').labels[0].includes('Aguardando revisão'));
   // confirmado: passa a valer
   const ok = baseShift({ answers, sectorMeta: { portaria: { firstAt: null, doneAt: null, carried: false } } });
@@ -267,4 +267,31 @@ test('backup preserva setores a revisar e a origem do plantão', () => {
   const { shifts } = parseBackup(buildBackup([s]));
   assert.equal(shifts[0].sectorMeta.portaria.carried, true);
   assert.equal(shifts[0].carriedFrom, 'zzzzzzzz-1111');
+});
+
+test('campo vazio sai como traço e nunca como "Não informado"', () => {
+  const t = reportText(baseShift());
+  assert.ok(!/não informado/i.test(t), 'sem a expressão "Não informado"');
+  assert.ok(/• \*Equipe completa\?\* -(\n|$)/.test(t));
+  assert.ok(!t.includes('_'), 'sem itálico residual');
+});
+
+test('relatório editado: usa o texto manual e detecta quando os dados mudam depois', () => {
+  const sh = baseShift();
+  const auto = reportText(sh);
+  assert.deepEqual({ e: finalReportText(sh).edited, s: finalReportText(sh).stale }, { e: false, s: false });
+  sh.reportEdit = { text: auto + '\nObs manual', base: auto };
+  let fr = finalReportText(sh);
+  assert.ok(fr.edited && !fr.stale && fr.text.endsWith('Obs manual'));
+  sh.answers = { portaria: { equipe_completa: 'sim' } };
+  fr = finalReportText(sh);
+  assert.ok(fr.edited && fr.stale, 'dados mudaram depois da edição');
+});
+
+test('reportEdit sobrevive a normalização e backup; edição vazia é descartada', () => {
+  const sh = baseShift({ reportEdit: { text: 'texto manual', base: 'x' } });
+  assert.equal(normalizeShift(JSON.parse(JSON.stringify(sh))).reportEdit.text, 'texto manual');
+  const back = parseBackup(buildBackup([normalizeShift(sh)]));
+  assert.equal(back.shifts[0].reportEdit.text, 'texto manual');
+  assert.equal(normalizeShift({ ...sh, reportEdit: { text: '   ', base: '' } }).reportEdit, null);
 });

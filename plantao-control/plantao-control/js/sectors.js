@@ -192,16 +192,38 @@ export function sectorAlerts(sector, answers = {}) {
   return out;
 }
 
+// Respostas "em vigor": setor copiado do plantão anterior e ainda não confirmado conta como vazio.
+export function effectiveAnswers(shift, id) {
+  if (shift.sectorMeta?.[id]?.carried) return {};
+  return shift.answers?.[id] || {};
+}
+
+// 'none' | 'progress' | 'review' | 'done'
+export function sectorStatus(shift, sector) {
+  if (shift.sectorMeta?.[sector.id]?.carried) return 'review';
+  return sectorProgress(sector, shift.answers?.[sector.id] || {}).status;
+}
+
+// Próximo setor que ainda precisa de atenção (não "done"), depois de fromIdx e dando a volta; exclui o próprio.
+export function nextAttention(shift, fromIdx = -1) {
+  const after = SECTORS.map((_, i) => i).filter((i) => i > fromIdx);
+  const before = SECTORS.map((_, i) => i).filter((i) => i < fromIdx);
+  for (const i of [...after, ...before]) if (sectorStatus(shift, SECTORS[i]) !== 'done') return SECTORS[i];
+  return null;
+}
+
 export function shiftSummary(shift) {
-  let done = 0, progress = 0, none = 0, alerts = 0, missing = 0;
+  let done = 0, progress = 0, none = 0, review = 0, alerts = 0, missing = 0;
   for (const s of SECTORS) {
-    const a = shift.answers?.[s.id] || {};
+    const st = sectorStatus(shift, s);
+    const a = effectiveAnswers(shift, s.id);
     const p = sectorProgress(s, a);
-    if (p.status === 'done') done++;
-    else if (p.status === 'progress') progress++;
+    if (st === 'done') done++;
+    else if (st === 'progress') progress++;
+    else if (st === 'review') review++;
     else none++;
     if (sectorAlerts(s, a).length) alerts++;
-    missing += p.status === 'none' ? p.total : p.missing.length;
+    missing += st === 'done' ? 0 : (p.status === 'none' ? p.total : p.missing.length);
   }
-  return { done, progress, none, alerts, missing, total: SECTORS.length };
+  return { done, progress, none, review, alerts, missing, total: SECTORS.length };
 }

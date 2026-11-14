@@ -1,7 +1,7 @@
-# PLANTÃO CONTROL — versão 1.0
+# PLANTÃO CONTROL — versão 1.1
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
-Substitui o preenchimento manual da mensagem de WhatsApp: o enfermeiro abre o plantão, preenche os 13 setores no celular, e o app monta a mensagem de apresentação e o relatório completo (texto, imagens PNG e PDF).
+Substitui o preenchimento manual da mensagem de WhatsApp: o enfermeiro abre o plantão (podendo **continuar a partir do último plantão**), confirma/ajusta os 13 setores no celular, e o app monta a mensagem de apresentação e o relatório completo (texto, imagens PNG e PDF).
 
 ## Executar localmente
 
@@ -35,19 +35,22 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 | `js/export.js` | Copiar, WhatsApp (`wa.me`), imagens PNG multipágina, PDF |
 | `js/app.js`, `js/ui.js` | Telas, rotas, salvamento automático, componentes |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA |
-| `fonts/` | Inter (local; licença OFL em `INTER-LICENSE.txt`) |
+| `fonts/` | Plus Jakarta Sans (local; licença OFL em `PLUS-JAKARTA-LICENSE.txt`) |
 | `tests/` | Testes unitários (Node) e de ponta a ponta (Playwright/Chromium) |
 
 ## Como funciona
 
-- **Fluxo:** Home → Novo plantão (tipo MT/N, data, horários, enfermeiros) → mensagem de apresentação (copiar / WhatsApp) → Painel com os 13 setores → formulários → Relatório → Finalizar.
-- **Estados do setor:** cinza (não iniciado), azul (em preenchimento, com contagem de pendências), verde (preenchido). Uma **ocorrência** (âmbar) é independente do preenchimento: um setor pode estar preenchido *e* com ocorrência.
-- **Respostas:** Sim / Não / N/A (não se aplica) / vazio = **Não informado**. Vazio nunca vira 0 ou "Não"; `0` é resposta válida.
+- **Fluxo:** Home → Iniciar plantão → (pergunta "Continuar a partir do último plantão?") → dados do plantão e mensagem de apresentação → Painel com os 13 setores → formulários → Relatório → Finalizar.
+- **Continuar do último plantão (praticidade):** ao iniciar, se já existe um plantão anterior, o app pergunta *Sim/Não*. Com **Sim**, as respostas do plantão mais recente são copiadas para o novo e **todos os setores entram como "Revisar"**. Em cada setor o enfermeiro vê os valores já preenchidos, altera só o que mudou e toca **Confirmar e seguir**, que já abre o próximo setor pendente. **Dado copiado e não confirmado nunca entra no relatório** (sai como "Não informado" e é avisado), para não enviar informação velha. O plantão original não é alterado.
+- **Seletor de setores:** no formulário, o botão com o contador (ex.: `5/13`) abre a lista dos 13 setores com o estado de cada um, para pular direto para qualquer setor. Uma barra de progresso fixa mostra "X de 13 preenchidos". **Próximo** pula os setores já prontos; quando não há mais pendências leva ao relatório.
+- **Estados do setor:** cinza (não iniciado), azul (em preenchimento / revisar), verde (preenchido). **Ocorrência** (âmbar) é independente do preenchimento.
+- **Campos:** Sim / Não / N/A (não se aplica) / vazio = **Não informado**. Vazio nunca vira 0 ou "Não"; `0` é resposta válida. Campos numéricos têm botões − e + e aceitam só dígitos.
+- **Mensagens para WhatsApp:** sem linhas em branco entre os itens; títulos e perguntas em *negrito* (`*texto*`), "Não informado" em itálico. Ao copiar texto selecionado da prévia, o app devolve a sintaxe do WhatsApp (os asteriscos).
 - **Relatório parcial:** a finalização nunca é bloqueada por campos vazios; eles aparecem como "Não informado" e são listados antes de finalizar.
-- **Salvamento:** automático (IndexedDB) a cada alteração, com selo de estado (Salvando / Salvo / Erro / Não salvo). Se o armazenamento falhar ou estiver indisponível, o app avisa em vez de fingir que salvou. Um diário síncrono em `localStorage` protege alterações feitas segundos antes de fechar/recarregar a página.
-- **Histórico de atividades:** início, preenchimento/atualização de cada setor, alterações pós-finalização e finalização. Só a confirmação da finalização leva o nome de um profissional (escolhido na hora); as demais alterações não são atribuídas a ninguém.
-- **Backup:** exportar/importar JSON validado (mescla por identificador; nunca apaga plantões existentes; só substitui um plantão se o do arquivo for mais recente).
-- **Privacidade:** nenhum dado sai do aparelho; sem analytics; sem campos de paciente (há apenas um lembrete discreto para não registrar dados pessoais).
+- **Salvamento:** automático (IndexedDB) a cada alteração, com selo (Salvando / Salvo / Erro / Não salvo). Se o armazenamento falhar ou estiver indisponível, o app avisa em vez de fingir que salvou. Um diário síncrono em `localStorage` protege alterações feitas segundos antes de fechar/recarregar.
+- **Histórico:** não há tela de histórico. Os plantões continuam sendo guardados em segundo plano (com o registro de atividades), e a Home mostra o **Último plantão** com atalhos para o relatório e para edição.
+- **Backup:** botão "Backup dos dados" na Home (exportar/importar JSON validado; mescla por identificador, nunca apaga plantões existentes).
+- **Privacidade:** nenhum dado sai do aparelho; sem analytics; sem campos de paciente.
 
 ## Decisões de interpretação (confira se coincidem com o modelo institucional)
 
@@ -60,61 +63,59 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 ## Testes
 
 ```bash
-npm test                              # 18 testes de lógica (Node)
+npm test                              # 21 testes de lógica (Node)
 node tests/serve.mjs 5173 &           # servidor
-python3 tests/e2e.py                  # 105 verificações no Chromium (Playwright)
+python3 tests/e2e.py                  # 108 verificações no Chromium (Playwright)
 CSP=1 node tests/serve.mjs 5174 &     # mesma suíte sob os cabeçalhos/CSP do vercel.json:
 BASE_URL=http://localhost:5174 python3 tests/e2e.py
 ```
 
-### Relatório de testes executados (14/11/2026)
+### Relatório de testes executados (14/11/2026, versão 1.1)
 
-**Executados e aprovados** (Chromium/Chrome headless, emulando iPhone 390×844, toque e `pt-BR`):
-- 18/18 testes unitários: 13 setores e ordem; **todas as perguntas originais com rótulo exato**; condicionais; zero vs. vazio; N/A; preenchimento × ocorrência; mensagem de apresentação igual ao modelo; relatório completo; acentuação/símbolos/texto longo; validação de datas/horários; backup (ida e volta, corrompido, parcial, duplicado); sanitização.
-- 105/105 verificações de ponta a ponta, também sob a CSP do `vercel.json`:
-  - **Navegação:** iniciar plantão, 13 setores em qualquer ordem, voltar/editar, retomar, próximo/anterior.
-  - **Formulários:** Sim/Não/N/A, condicionais, zero, vazio, só dígitos nos numéricos, limite de 1000 caracteres, estados do painel (cinza/azul/verde/âmbar).
-  - **Persistência:** recarregar a página; **fechar e reabrir o navegador** (perfil persistente); digitar e recarregar imediatamente; novo plantão preservando o histórico; aviso de plantão duplicado e de plantão em andamento.
-  - **Relatório:** 13 setores na ordem, todas as perguntas, respostas conferidas, caracteres especiais; copiar (conteúdo real da área de transferência); URL `wa.me` com texto codificado idêntico ao relatório; PNGs de 1080 px (7 páginas no relatório completo de teste) e PDF válido (mesmo nº de páginas).
-  - **Finalização:** prévia, ocorrências, pendências, confirmação por profissional, data/hora, edição posterior com relatório atualizado e registro na atividade.
-  - **Falhas:** IndexedDB indisponível (aviso, selo "Não salvo"), erro de gravação (selo de erro, aviso e nova tentativa), backup corrompido, backup de outro formato, backup parcialmente inválido, importação duplicada (não duplica), exclusão com confirmação.
-  - **Mobile:** sem rolagem horizontal em 320/360/390/430 px em todas as telas; controles ≥ 44×44 px; campos com fonte ≥ 16 px (evita zoom do iOS).
-  - **PWA:** manifest e ícones válidos; service worker ativo; app abre **offline** (Chromium).
+**Executados e aprovados** (Chrome headless emulando iPhone 390×844, toque e `pt-BR`; 21/21 unitários e 108/108 de ponta a ponta, também sob a CSP do `vercel.json`):
+- **Formatação das mensagens:** apresentação e relatório sem linhas em branco; negrito em títulos e perguntas; asteriscos balanceados; texto copiado idêntico ao enviado no link `wa.me`; cópia de texto selecionado preserva `*negrito*`.
+- **Tema:** fundo branco, vermelho/verde, fonte Plus Jakarta Sans carregada localmente.
+- **Continuar do último plantão:** pergunta Sim/Não; "Não" abre em branco; "Sim" copia tudo para revisão (13 setores "Revisar", contador 0/13); relatório não leva dado não confirmado; confirmar sobe o contador e abre o próximo; 12 confirmações seguidas levam ao relatório; plantão original intacto; atalhos de enfermeiros recentes.
+- **Seletor e progresso:** lista de 13 setores, salto direto, contador e barra (100% ao completar), "Próximo" pulando setores prontos, botões − e +.
+- **Mantidos da v1.0:** 13 setores e todas as perguntas, condicionais, zero/vazio/N/A, persistência (recarregar, fechar e reabrir, interromper ao digitar), relatório completo, PNG (1080 px, multipágina) e PDF, finalização com confirmação por profissional, edição após finalizar, backup (corrompido, formato errado, duplicado, restauração em outro perfil), falhas de armazenamento, sem rolagem horizontal em 320–430 px, toques ≥ 44 px, PWA e abertura offline (Chromium).
 
 **NÃO testado (limitações reais do ambiente):**
-- Safari no iPhone e Chrome em Android físicos; teclado virtual real; instalação na tela inicial; comportamento do IndexedDB do Safari em modo privado ou após inatividade.
-- Abertura real do WhatsApp e o envio: o teste confirma apenas a URL gerada (`window.open` foi simulado). O app **não escolhe o grupo**; o usuário escolhe a conversa no WhatsApp.
-- Compartilhamento nativo de imagens (`navigator.share` com arquivos): sem suporte no Chromium headless; o app cai para download.
-- No teste de reabertura do navegador, o download do backup foi verificado capturando o arquivo gerado pelo app (limitação do Playwright ao baixar arquivos em perfil reaberto); o download real de PNG/PDF foi verificado na primeira sessão.
+- Safari no iPhone e Chrome em Android físicos; teclado virtual real; instalação na tela inicial; IndexedDB do Safari em modo privado ou após inatividade.
+- Abertura real do WhatsApp e envio: o teste confirma apenas a URL/texto gerados. O app não escolhe o grupo.
+- Compartilhamento nativo de imagens (sem suporte no Chromium headless; o app baixa os arquivos).
+- No teste de reabertura do navegador, o download do backup foi verificado capturando o arquivo gerado (limitação do Playwright); o download real de PNG/PDF foi verificado na primeira sessão.
 
-### Problemas encontrados nos testes e correções
+### Problemas encontrados nos testes e correções (v1.1)
 
-1. **Perda de dados ao recarregar logo após digitar** (gravação assíncrona não concluía) → diário síncrono em `localStorage` + recuperação na abertura.
-2. Rolagem horizontal de 2 px em 320 px na barra de ações do setor → botões passaram a encolher.
-3. Selo "Salvo" com área de toque de 28 px → 44 px.
-4. **Cartão de setor "em preenchimento" cortado** (colisão de classe CSS com a barra de progresso) → renomeada para `.pbar`.
-5. Rótulo longo e etiquetas apertando o nome do setor em 320 px → etiquetas movidas para baixo do nome.
-6. Título truncado no topo do painel em telas estreitas → título/subtítulo encurtados.
+1. Painel de Backup continuava aberto ao navegar para outra tela → painéis fecham ao trocar de tela.
+2. Relatório não avisava explicitamente os setores "aguardando revisão" → aviso adicionado (tela e finalização).
+3. Selo "Salvo" da faixa de progresso com área de toque de 28 px → 44 px.
+4. Nomes longos quebrados no seletor de setores ("Enferma/ria") → status movido para baixo do nome.
+5. Botão "Continuar: <setor>" truncado → texto com reticências; etiqueta "Revisar" redundante removida.
+6. Data na Home com "De"/"Novembro" capitalizados → só a 1ª letra.
+
+(Problemas da v1.0, já corrigidos: perda de dados ao recarregar logo após digitar, colisão de classes CSS que cortava cartões, e ajustes em telas de 320 px.)
 
 ## Limitações conhecidas
 
 - Dados ficam **só neste aparelho e navegador** (sem sincronização). O iOS pode limpar dados de sites não instalados após longa inatividade: **instale na Tela de Início e exporte backups periodicamente**.
+- Sem tela de histórico, não há como excluir plantões pela interface (eles ficam guardados em segundo plano).
+- "Continuar do último plantão" usa o plantão mais recente por data/horário, independentemente de quem o preencheu.
 - Duas abas editando o mesmo plantão ao mesmo tempo podem sobrescrever uma à outra (vale a última gravação).
-- O PDF é composto por páginas-imagem (A4); o texto não é selecionável. A imagem/PDF seguem a proporção A4.
+- O PDF é composto por páginas-imagem (A4); o texto não é selecionável.
 - Mensagens muito longas (> ~6.000 caracteres codificados) não cabem em um link `wa.me`: o app usa o compartilhamento nativo ou copia o texto para você colar.
 - Asteriscos/underlines digitados nos campos de texto podem ser interpretados como formatação pelo WhatsApp.
-- O service worker prioriza a rede (recebe atualizações) e usa o cache só sem conexão; não há aviso de "nova versão disponível".
+- O service worker prioriza a rede e usa o cache só sem conexão; não há aviso de "nova versão disponível".
 
 ## Checklist de validação mobile (faça no seu aparelho antes do uso real)
 
 - [ ] Abrir a URL da Vercel no Safari (iPhone) / Chrome (Android) e adicionar à Tela de Início; abrir pelo ícone.
-- [ ] Criar plantão; conferir a mensagem de apresentação; tocar em **WhatsApp**, escolher a conversa e conferir o texto.
-- [ ] Preencher um setor com o teclado virtual: campos numéricos abrem teclado numérico; nada fica escondido atrás do teclado; sem zoom automático.
-- [ ] Usar com uma mão: botões e barra de ações alcançáveis.
+- [ ] Criar plantão; tocar em **WhatsApp**, escolher a conversa e conferir que o texto chega **sem linhas em branco e com negrito**.
+- [ ] Finalizar um plantão; iniciar outro e responder **Sim** em "Continuar a partir do último plantão": revisar, alterar e **Confirmar e seguir** em alguns setores.
+- [ ] Usar o botão de setores (contador no topo) para pular para outro setor e ver a barra de progresso avançar.
+- [ ] Preencher com o teclado virtual: campos numéricos abrem teclado numérico; nada fica atrás do teclado; sem zoom automático; botões − e + confortáveis com uma mão.
 - [ ] Fechar o app/navegador por completo e reabrir: plantão e respostas continuam lá.
 - [ ] Modo avião: o app abre e os dados aparecem.
-- [ ] Relatório completo → **Copiar** → colar no WhatsApp: formatação (negrito/lista) correta.
-- [ ] **Gerar imagens**: todas as páginas legíveis; compartilhar/salvar na galeria.
-- [ ] **Exportar PDF** e abrir.
-- [ ] Exportar backup, apagar um plantão de teste e importar o backup de volta.
-- [ ] Finalizar plantão e corrigir um setor depois; conferir a atividade.
+- [ ] Relatório completo → **Copiar** → colar no WhatsApp: formatação correta.
+- [ ] **Gerar imagens** (páginas legíveis, cores) e **Exportar PDF**.
+- [ ] Exportar backup pela Home, e importar em outro navegador.

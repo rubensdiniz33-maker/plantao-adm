@@ -79,6 +79,7 @@ export function normalizeShift(raw) {
       sectorMeta[s.id] = {
         firstAt: isIso(m.firstAt) ? m.firstAt : null,
         doneAt: isIso(m.doneAt) ? m.doneAt : null,
+        carried: m.carried === true,
       };
     }
   }
@@ -101,6 +102,7 @@ export function normalizeShift(raw) {
     end: raw.end,
     nurses,
     status,
+    carriedFrom: typeof raw.carriedFrom === 'string' && /^[\w-]{8,64}$/.test(raw.carriedFrom) ? raw.carriedFrom : null,
     createdAt: isIso(raw.createdAt) ? raw.createdAt : now,
     updatedAt: isIso(raw.updatedAt) ? raw.updatedAt : now,
     finalizedAt: status === 'finalizado' && isIso(raw.finalizedAt) ? raw.finalizedAt : null,

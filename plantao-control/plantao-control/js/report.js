@@ -1,5 +1,5 @@
 // Geração das mensagens (apresentação e relatório) a partir dos dados do plantão.
-import { SECTORS, NA, visibleFields, isAnswered, sectorProgress, sectorAlerts } from './sectors.js';
+import { SECTORS, visibleFields, isAnswered, sectorProgress, sectorAlerts, sectorStatus, effectiveAnswers, NA } from './sectors.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -30,17 +30,14 @@ export const shiftLabel = (type) => (type === 'N' ? 'noturno' : 'diurno');
 export const shiftName = (type) => (type === 'N' ? 'Noturno (N)' : 'Manhã/Tarde (MT)');
 export const hoursText = (s) => `${formatHour(s.start)} às ${formatHour(s.end)}hrs`;
 
+// Mensagem de apresentação: sem linhas em branco; destaques em negrito (*...*) do WhatsApp.
 export function openingMessage(s) {
   return [
     `${greeting(s.start)}!`,
-    '',
-    `Iniciando plantão administrativo ${shiftLabel(s.type)}`,
-    '',
-    `Data: ${formatDateBR(s.date)}`,
-    '',
-    `Horário: ${hoursText(s)}`,
-    '',
-    `Enf: ${joinNames(s.nurses)}`,
+    `*Iniciando plantão administrativo ${shiftLabel(s.type)}*`,
+    `*Data:* ${formatDateBR(s.date)}`,
+    `*Horário:* ${hoursText(s)}`,
+    `*Enf:* ${joinNames(s.nurses)}`,
   ].join('\n');
 }
 
@@ -55,15 +52,15 @@ export function displayValue(field, v) {
 }
 
 // Modelo estruturado — única fonte para texto, prévia, imagem e PDF.
+// Setor copiado do plantão anterior e ainda não confirmado NÃO vai para o relatório (evita enviar dado velho).
 export function reportModel(shift) {
   return SECTORS.map((sector, i) => {
-    const answers = shift.answers?.[sector.id] || {};
-    const prog = sectorProgress(sector, answers);
+    const answers = effectiveAnswers(shift, sector.id);
     return {
       id: sector.id,
       index: i + 1,
       title: sector.title,
-      status: prog.status,
+      status: sectorStatus(shift, sector),
       alerts: sectorAlerts(sector, answers),
       rows: visibleFields(sector, answers).map((f) => ({
         label: f.label,
@@ -84,29 +81,25 @@ export function reportHeader(shift) {
   };
 }
 
-// Texto para WhatsApp: *negrito*, _itálico_ para "Não informado".
+// Texto para WhatsApp: SEM linhas em branco. Perguntas e títulos em *negrito*; "Não informado" em _itálico_.
 export function reportText(shift) {
   const h = reportHeader(shift);
   const lines = [
     `*${h.title}*`,
-    `Data: ${h.date}`,
-    `Horário: ${h.hours}`,
-    `Enf: ${h.nurses}`,
+    `*Data:* ${h.date}`,
+    `*Horário:* ${h.hours}`,
+    `*Enf:* ${h.nurses}`,
   ];
   for (const sec of reportModel(shift)) {
-    lines.push('', `*${sec.index}. ${sec.title.toUpperCase()}*`);
+    lines.push(`*${sec.index}. ${sec.title.toUpperCase()}*`);
     for (const r of sec.rows) {
       const pre = r.indent ? '   ◦ ' : '• ';
-      let val = r.text;
-      if (r.kind === 'ni') val = '_Não informado_';
-      else if (r.kind === 'na') val = 'Não se aplica';
-      else if (r.kind === 'sim' || r.kind === 'nao') val = `*${r.text}*`;
-      if (r.kind === 'val' && r.text.includes('\n')) {
-        const body = r.text.split('\n').map((l) => `    ${l.trim()}`).join('\n');
-        lines.push(`${pre}${r.label}:\n${body}`);
-      } else {
-        lines.push(`${pre}${r.label}: ${val}`);
-      }
+      const lab = `*${r.label}${r.label.endsWith('?') ? '' : ':'}*`;
+      if (r.kind === 'ni') lines.push(`${pre}${lab} _Não informado_`);
+      else if (r.kind === 'val' && r.text.includes('\n')) {
+        lines.push(`${pre}${lab}`);
+        for (const l of r.text.split('\n')) if (l.trim()) lines.push(`      ${l.trim()}`);
+      } else lines.push(`${pre}${lab} ${r.text}`);
     }
   }
   return lines.join('\n');
@@ -116,6 +109,8 @@ export function reportText(shift) {
 export function missingList(shift) {
   const out = [];
   for (const sector of SECTORS) {
+    const status = sectorStatus(shift, sector);
+    if (status === 'review') { out.push({ id: sector.id, title: sector.title, status, labels: ['Aguardando revisão (dados do plantão anterior ainda não confirmados)'] }); continue; }
     const answers = shift.answers?.[sector.id] || {};
     const p = sectorProgress(sector, answers);
     const labels = p.status === 'none'
@@ -137,5 +132,5 @@ export function whatsappToHtml(textValue) {
   const esc = textValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return esc
     .replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:])/g, '$1<em>$2</em>');
+    .replace(/(^|[\s(>])_([^_\n]+)_(?=$|[\s).,;:<])/g, '$1<em>$2</em>');
 }

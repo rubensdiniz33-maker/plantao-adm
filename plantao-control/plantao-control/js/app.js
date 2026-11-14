@@ -1,7 +1,8 @@
 // PLANTÃO CONTROL — interface, rotas e fluxo do plantão.
 import * as storage from './storage.js';
 import {
-  SECTORS, SECTOR_BY_ID, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts, shiftSummary,
+  SECTORS, SECTOR_BY_ID, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts,
+  sectorStatus, effectiveAnswers, nextAttention, shiftSummary,
 } from './sectors.js';
 import {
   MAX_ACTIVITY, validateIdentification, cleanName, normalizeShift, parseBackup, buildBackup,
@@ -11,7 +12,7 @@ import {
 } from './report.js';
 import { copyText, shareWhatsApp, buildPngs, buildPdf, downloadBlob, shareFiles } from './export.js';
 import {
-  h, icon, toast, dialog, confirmDialog, longDate, todayISO, timeHM, dateTimeBR, uuid, pad2,
+  h, icon, toast, dialog, confirmDialog, sheet, attachWaCopy, longDate, todayISO, dateTimeBR, uuid, pad2,
 } from './ui.js';
 
 const app = document.getElementById('app');
@@ -152,9 +153,9 @@ function commitSector(end) {
     const prog = sectorProgress(sector, shift.answers[sector.id] || {});
     const post = shift.status === 'finalizado';
     if (post) log(shift, 'post', `${sector.title} atualizado após a finalização`, sector.id);
-    else if (prog.status === 'done' && !meta.doneAt) log(shift, 'done', `${sector.title} preenchido`, sector.id);
+    else if (prog.status === 'done' && !meta.doneAt && !meta.carried) log(shift, 'done', `${sector.title} preenchido`, sector.id);
     else if (!sess.startedLogged) log(shift, 'update', `${sector.title} atualizado`, sector.id);
-    if (prog.status === 'done' && !meta.doneAt) meta.doneAt = nowISO();
+    if (prog.status === 'done' && !meta.doneAt && !meta.carried) meta.doneAt = nowISO();
     sess.dirty = false;
     sess.startedLogged = false;
     touch(shift);
@@ -165,12 +166,18 @@ function commitSector(end) {
 // =====================================================================
 // Home
 // =====================================================================
+const hasAnswers = (sh) => Object.values(sh.answers || {}).some((a) => a && Object.keys(a).length);
+
 function screenHome(shifts) {
   const active = shifts.filter((s) => s.status === 'em_andamento').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const last = shifts.find((s) => s.status === 'finalizado' && (!active || s.id !== active.id));
   const children = [
-    h('div', null,
-      h('h1', { class: 'brand' }, 'PLANTÃO ', h('span', null, 'CONTROL')),
-      h('div', { class: 'datehero' }, longDate())),
+    h('div', { class: 'tri', 'aria-hidden': 'true' }, h('i'), h('i')),
+    h('div', { class: 'brandrow' },
+      h('div', { class: 'logo' }, icon('logo')),
+      h('div', null,
+        h('h1', { class: 'brand' }, 'PLANTÃO ', h('span', null, 'CONTROL')),
+        h('div', { class: 'datehero' }, longDate()))),
     storageBanner(),
   ];
   if (active) {
@@ -178,32 +185,100 @@ function screenHome(shifts) {
     children.push(h('div', { class: 'card active-card stack' },
       h('div', { class: 'eyebrow' }, 'Plantão em andamento'),
       h('div', null, h('h2', null, shiftTitle(active)), h('div', { class: 'meta' }, `${hoursText(active)} · ${joinNames(active.nurses)}`)),
-      h('div', { class: 'meta' }, `${sm.done}/${sm.total} setores preenchidos${sm.alerts ? ` · ${sm.alerts} com ocorrência` : ''}`),
+      h('div', { class: 'meta' }, `${sm.done}/${sm.total} setores preenchidos${sm.review ? ` · ${sm.review} para revisar` : ''}${sm.alerts ? ` · ${sm.alerts} com ocorrência` : ''}`),
       h('a', { class: 'btn primary lg block', href: `#/p/${active.id}`, id: 'btn-resume' }, icon('play'), 'RETOMAR PLANTÃO')));
   }
-  const startBtn = h('button', {
-    class: `btn ${active ? 'secondary' : 'primary'} lg block`, type: 'button', id: 'btn-start',
-    onclick: async () => {
-      if (active) {
-        const choice = await dialog({
-          title: 'Já existe um plantão em andamento',
-          body: `${shiftTitle(active)} ainda não foi finalizado. Você pode retomá-lo ou iniciar um novo plantão sem apagar este.`,
-          actions: [
-            { label: 'Cancelar', value: null, variant: 'ghost' },
-            { label: 'Iniciar novo', value: 'new', variant: 'secondary' },
-            { label: 'Retomar', value: 'resume', variant: 'primary' },
-          ],
-        });
-        if (choice === 'resume') go(`#/p/${active.id}`);
-        else if (choice === 'new') go('#/novo');
-      } else go('#/novo');
-    },
-  }, icon('plus'), 'INICIAR PLANTÃO');
-  children.push(h('div', { class: 'stack' }, startBtn,
-    h('a', { class: 'btn ghost lg block', href: '#/historico', id: 'btn-history' }, icon('clock'), 'Histórico')));
+
+  const startNew = async () => {
+    if (active) {
+      const choice = await dialog({
+        title: 'Já existe um plantão em andamento',
+        body: `${shiftTitle(active)} ainda não foi finalizado. Você pode retomá-lo ou iniciar um novo plantão sem apagar este.`,
+        actions: [
+          { label: 'Cancelar', value: null, variant: 'ghost' },
+          { label: 'Iniciar novo', value: 'new', variant: 'secondary' },
+          { label: 'Retomar', value: 'resume', variant: 'primary' },
+        ],
+      });
+      if (choice === 'resume') { go(`#/p/${active.id}`); return; }
+      if (choice !== 'new') return;
+    }
+    const base = shifts.find((s) => hasAnswers(s));
+    if (!base) { go('#/novo'); return; }
+    const c = await dialog({
+      title: 'Continuar a partir do último plantão?',
+      body: `Copia as informações do plantão ${shiftTitle(base)} para você só confirmar e alterar o que mudou, setor a setor.`,
+      actions: [
+        { label: 'Não, em branco', value: 'blank', variant: 'secondary' },
+        { label: 'Sim, continuar', value: 'carry', variant: 'primary' },
+      ],
+    });
+    if (c === 'carry') go(`#/novo/${base.id}`);
+    else if (c === 'blank') go('#/novo');
+  };
+
+  children.push(h('div', { class: 'stack' },
+    h('button', { class: `btn ${active ? 'secondary' : 'primary'} lg block`, type: 'button', id: 'btn-start', onclick: startNew }, icon('plus'), 'INICIAR PLANTÃO')));
+  if (last) {
+    children.push(h('div', { class: 'card lastcard stack', id: 'last-card' },
+      h('div', { class: 'eyebrow' }, 'Último plantão'),
+      h('div', null, h('h3', null, shiftTitle(last)), h('div', { class: 'meta' }, `${hoursText(last)} · ${joinNames(last.nurses)}`)),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn secondary small', href: `#/p/${last.id}/relatorio`, id: 'btn-last-report' }, icon('file'), 'Relatório'),
+        h('a', { class: 'btn secondary small', href: `#/p/${last.id}`, id: 'btn-last-open' }, icon('edit'), 'Editar'))));
+  }
   children.push(h('div', { class: 'spacer' }));
+  children.push(h('button', { class: 'btn ghost small', type: 'button', id: 'btn-backup', onclick: () => openBackupSheet() }, icon('download'), 'Backup dos dados'));
   children.push(h('p', { class: 'note' }, 'Os dados ficam armazenados neste dispositivo e neste navegador. Não há sincronização entre dispositivos.'));
   mount(h('main', { class: 'screen home' }, children));
+}
+
+// ---------- Backup (exportar / importar) ----------
+function openBackupSheet() {
+  let sh;
+  const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, id: 'import-file', onchange: async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error('O arquivo é grande demais para ser um backup válido.');
+      const { shifts: incoming, rejected } = parseBackup(await file.text());
+      const current = await storage.listShifts();
+      const map = new Map(current.map((x) => [x.id, x]));
+      const toWrite = incoming.filter((x) => !map.has(x.id) || x.updatedAt > map.get(x.id).updatedAt);
+      const added = toWrite.filter((x) => !map.has(x.id)).length;
+      const replaced = toWrite.length - added;
+      const skipped = incoming.length - toWrite.length;
+      if (!toWrite.length) { toast(`Nada a importar: os ${incoming.length} plantão(ões) do arquivo já estão aqui com a mesma versão ou mais nova.`, 'ok'); return; }
+      const ok = await confirmDialog({
+        title: 'Importar backup?',
+        message: `${added} novo(s), ${replaced} atualizado(s) por versão mais recente${skipped ? `, ${skipped} ignorado(s) por já existirem` : ''}${rejected ? `. ${rejected} registro(s) inválido(s) serão descartados` : ''}. Nenhum plantão existente será apagado.`,
+        confirmText: 'Importar',
+      });
+      if (!ok) return;
+      const r = await storage.saveMany(toWrite);
+      if (!r.persisted) toast('Importado apenas na memória: armazenamento indisponível.', 'error');
+      else toast(`Backup importado: ${added} novo(s), ${replaced} atualizado(s)`, 'ok');
+      sh.close();
+      route();
+    } catch (err) {
+      toast(err.message || 'Não foi possível importar o arquivo.', 'error');
+    }
+  } });
+  const body = h('div', { class: 'stack' },
+    h('p', { class: 'note' }, 'Guarde uma cópia dos plantões ou leve-os para outro aparelho. Os dados ficam só neste dispositivo e navegador; não há sincronização.'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn secondary', type: 'button', id: 'btn-export-backup', onclick: async () => {
+        try {
+          const all = await storage.listShifts();
+          if (!all.length) { toast('Não há plantões para exportar.', 'error'); return; }
+          downloadBlob(new Blob([buildBackup(all)], { type: 'application/json' }), `plantao-control-backup-${todayISO()}.json`);
+          toast('Backup exportado', 'ok');
+        } catch { toast('Não foi possível exportar o backup.', 'error'); }
+      } }, icon('download'), 'Exportar'),
+      h('button', { class: 'btn secondary', type: 'button', id: 'btn-import-backup', onclick: () => fileIn.click() }, icon('upload'), 'Importar'),
+      fileIn));
+  sh = sheet({ title: 'Backup dos dados', body });
 }
 
 // =====================================================================
@@ -220,7 +295,7 @@ function defaultDraft() {
 }
 const TYPE_DEFAULTS = { MT: ['07:00', '19:00'], N: ['19:00', '07:00'] };
 
-function screenOpening(shift, shifts) {
+function screenOpening(shift, shifts, base) {
   const isNew = !shift;
   const form = isNew ? defaultDraft() : { type: shift.type, date: shift.date, start: shift.start, end: shift.end, nurses: [...shift.nurses] };
   let timesTouched = !isNew;
@@ -233,6 +308,7 @@ function screenOpening(shift, shifts) {
   const errTime = h('div', { class: 'error', hidden: true });
   const errNurses = h('div', { class: 'error', hidden: true });
   const preview = h('div', { class: 'preview', id: 'opening-preview' });
+  attachWaCopy(preview);
 
   const dateIn = h('input', { class: 'input', type: 'date', id: 'f-date', 'aria-label': 'Data do plantão', oninput: (e) => { form.date = e.target.value; update(); } });
   const startIn = h('input', { class: 'input', type: 'time', id: 'f-start', 'aria-label': 'Horário de início', oninput: (e) => { form.start = e.target.value; timesTouched = true; update(); } });
@@ -251,13 +327,29 @@ function screenOpening(shift, shifts) {
       }, v, h('small', null, sub))));
 
   const nurseBox = h('div', { class: 'stack' });
+  const recent = [];
+  for (const sh of shifts) for (const n of sh.nurses) if (!recent.includes(n) && recent.length < 8) recent.push(n);
+  const chipBox = h('div', { class: 'chips', id: 'recent-nurses' });
+  function drawChips() {
+    const used = new Set(form.nurses.map((n) => cleanName(n).toLowerCase()));
+    const list = recent.filter((n) => !used.has(n.toLowerCase()));
+    chipBox.hidden = !isNew || !list.length;
+    chipBox.replaceChildren(h('span', { class: 'lbl2' }, 'Recentes:'), ...list.map((n) => h('button', {
+      class: 'chip', type: 'button', 'data-name': n,
+      onclick: () => {
+        const empty = form.nurses.findIndex((x) => !cleanName(x));
+        if (empty >= 0) form.nurses[empty] = n; else form.nurses.push(n);
+        drawNurses(); update();
+      },
+    }, n)));
+  }
   function drawNurses(focusIdx) {
     nurseBox.replaceChildren(...form.nurses.map((n, i) => {
       const inp = h('input', {
         class: 'input', type: 'text', maxlength: '60', autocomplete: 'off', autocapitalize: 'words', enterkeyhint: 'done',
         placeholder: i === 0 ? 'Enfermeiro responsável' : 'Enfermeiro adicional', 'aria-label': i === 0 ? 'Enfermeiro responsável' : `Enfermeiro adicional ${i}`,
         'data-nurse': String(i),
-        oninput: (e) => { form.nurses[i] = e.target.value; update(); },
+        oninput: (e) => { form.nurses[i] = e.target.value; update(); drawChips(); },
       });
       inp.value = n;
       return h('div', { class: 'nurse' }, inp,
@@ -266,6 +358,7 @@ function screenOpening(shift, shifts) {
           : null);
     }));
     if (focusIdx !== undefined) nurseBox.querySelectorAll('input')[focusIdx]?.focus();
+    drawChips();
   }
 
   function update() {
@@ -279,7 +372,7 @@ function screenOpening(shift, shifts) {
     setErr(errNurses, errs.nurses);
     const previewable = !errs.date && !errs.start && !errs.end && !errs.nurses && !errs.type;
     if (previewable) {
-      preview.textContent = openingMessage({ ...form, nurses: form.nurses.map(cleanName).filter(Boolean) });
+      preview.innerHTML = whatsappToHtml(openingMessage({ ...form, nurses: form.nurses.map(cleanName).filter(Boolean) }));
     } else preview.textContent = 'Preencha tipo, data, horários e o enfermeiro responsável para gerar a mensagem.';
     copyBtn.disabled = shareBtn.disabled = !previewable;
     if (ready && !isNew && Object.keys(errs).length === 0) {
@@ -333,9 +426,18 @@ function screenOpening(shift, shifts) {
       const s = {
         id: uuid(), schema: 1, type: form.type, date: form.date, start: form.start, end: form.end, nurses,
         status: 'em_andamento', createdAt: now, updatedAt: now, finalizedAt: null, finalizedBy: null,
-        answers: {}, sectorMeta: {}, activity: [],
+        answers: {}, sectorMeta: {}, activity: [], carriedFrom: base ? base.id : null,
       };
-      log(s, 'start', 'Plantão iniciado');
+      if (base) {
+        for (const sec of SECTORS) {
+          const a = base.answers[sec.id];
+          if (a && Object.keys(a).length) {
+            s.answers[sec.id] = JSON.parse(JSON.stringify(a));
+            s.sectorMeta[sec.id] = { firstAt: null, doneAt: null, carried: true };
+          }
+        }
+      }
+      log(s, 'start', base ? `Plantão iniciado a partir do plantão de ${formatDateBR(base.date)}` : 'Plantão iniciado');
       try {
         const r = await storage.saveShift(s);
         setSave(r.persisted ? 'saved' : 'volatile');
@@ -354,6 +456,7 @@ function screenOpening(shift, shifts) {
     topbar({ title: isNew ? 'Novo plantão' : 'Dados do plantão', back: isNew ? '#/' : `#/p/${shift.id}`, right: isNew ? null : saveBadge() }),
     h('div', { class: 'content' },
       storageBanner(),
+      base ? h('div', { class: 'banner info', id: 'carry-banner' }, icon('refresh'), h('div', null, h('b', null, 'Continuando do plantão anterior. '), `${shiftTitle(base)}: as informações dos setores virão para você revisar e confirmar.`)) : null,
       h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Tipo de plantão'), typeSeg, errType),
       h('div', { class: 'field' }, h('label', { for: 'f-date' }, 'Data'), dateIn, errDate),
       h('div', { class: 'field' },
@@ -361,7 +464,7 @@ function screenOpening(shift, shifts) {
           h('div', { class: 'field' }, h('label', { for: 'f-start' }, 'Início'), startIn),
           h('div', { class: 'field' }, h('label', { for: 'f-end' }, 'Término'), endIn)),
         errTime),
-      h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Enfermeiros responsáveis'), nurseBox, addBtn, errNurses),
+      h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Enfermeiros responsáveis'), nurseBox, chipBox, addBtn, errNurses),
       h('div', { class: 'sectiontitle' }, 'Mensagem de apresentação'),
       preview,
       h('div', { class: 'row' }, copyBtn, shareBtn),
@@ -377,32 +480,36 @@ function screenOpening(shift, shifts) {
 // =====================================================================
 // Painel de setores
 // =====================================================================
+const ST_TEXT = { none: 'Não iniciado', progress: 'Em preenchimento', review: 'Revisar informações', done: 'Preenchido' };
+
 function screenPanel(shift) {
   const sm = shiftSummary(shift);
   const fill = h('i');
   const list = h('div', { class: 'sectors' }, SECTORS.map((sector) => {
-    const ans = shift.answers[sector.id] || {};
+    const status = sectorStatus(shift, sector);
+    const ans = effectiveAnswers(shift, sector.id);
     const prog = sectorProgress(sector, ans);
     const alerts = sectorAlerts(sector, ans);
-    const stText = { none: 'Não iniciado', progress: 'Em preenchimento', done: 'Preenchido' }[prog.status];
     return h('a', {
-      class: `sec ${prog.status}${alerts.length ? ' alert' : ''}`, href: `#/p/${shift.id}/s/${sector.id}`, id: `sec-${sector.id}`,
-      'data-status': prog.status, 'data-alert': alerts.length ? '1' : '0',
-      'aria-label': `${sector.title}: ${stText}${alerts.length ? ', com ocorrência' : ''}`,
+      class: `sec ${status}${alerts.length ? ' alert' : ''}`, href: `#/p/${shift.id}/s/${sector.id}`, id: `sec-${sector.id}`,
+      'data-status': status, 'data-alert': alerts.length ? '1' : '0',
+      'aria-label': `${sector.title}: ${ST_TEXT[status]}${alerts.length ? ', com ocorrência' : ''}`,
     },
     h('span', { class: 'ico' }, icon(sector.icon)),
     h('span', { class: 'txt' },
       h('span', { class: 'name' }, sector.title),
-      h('span', { class: 'st' }, stText),
-      alerts.length || prog.status === 'progress'
+      h('span', { class: 'st' }, ST_TEXT[status]),
+      alerts.length || status === 'progress'
         ? h('span', { class: 'tags' },
           alerts.length ? h('span', { class: 'tag amber' }, icon('alert'), 'Ocorrência') : null,
-          prog.status === 'progress' ? h('span', { class: 'tag pend' }, `${prog.missing.length} pend.`) : null)
+          status === 'progress' ? h('span', { class: 'tag pend' }, `${prog.missing.length} pend.`) : null,
+          null)
         : null),
-    prog.status === 'done' && !alerts.length ? h('span', { class: 'tag ok' }, icon('check')) : null,
+    status === 'done' && !alerts.length ? h('span', { class: 'tag ok' }, icon('check')) : null,
     icon('chevron', 'chev'));
   }));
 
+  const nxt = nextAttention(shift, -1);
   const screen = h('main', { class: 'screen' },
     topbar({
       title: 'Painel', sub: `${shift.type === 'N' ? 'Noturno' : 'Manhã/Tarde'} · ${formatDateBR(shift.date)}`, back: '#/',
@@ -412,20 +519,26 @@ function screenPanel(shift) {
     h('div', { class: 'content' },
       storageBanner(),
       shift.status === 'finalizado'
-        ? h('div', { class: 'banner warn' }, icon('flag'), h('div', null, `Plantão finalizado em ${dateTimeBR(shift.finalizedAt)}. Alterações atualizam o relatório e ficam registradas na atividade.`))
+        ? h('div', { class: 'banner warn' }, icon('flag'), h('div', null, `Plantão finalizado em ${dateTimeBR(shift.finalizedAt)}. Alterações atualizam o relatório.`))
+        : null,
+      sm.review
+        ? h('div', { class: 'banner info', id: 'review-banner' }, icon('refresh'), h('div', null, `${sm.review} setor(es) vieram do plantão anterior. Abra cada um, altere o que mudou e confirme.`))
         : null,
       h('div', { class: 'card panelhead' },
         h('div', { class: 'line' }, h('span', { class: 'big', id: 'progress-label' }, `${sm.done} de ${sm.total} setores preenchidos`), h('span', { class: 'meta' }, hoursText(shift))),
         h('div', { class: 'pbar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(sm.total), 'aria-valuenow': String(sm.done) }, fill),
         h('div', { class: 'counts' },
           h('span', null, h('i', { class: 'dot done' }), h('b', null, sm.done), ' preenchidos'),
+          sm.review ? h('span', null, h('i', { class: 'dot review' }), h('b', null, sm.review), ' para revisar') : null,
           h('span', null, h('i', { class: 'dot progress' }), h('b', null, sm.progress), ' em preenchimento'),
           h('span', null, h('i', { class: 'dot' }), h('b', null, sm.none), ' não iniciados'),
           h('span', null, h('i', { class: 'dot alert' }), h('b', null, sm.alerts), ' com ocorrência'))),
       list),
     h('div', { class: 'actionbar' },
-      h('a', { class: 'btn secondary fit', href: `#/p/${shift.id}/atividade`, id: 'btn-activity' }, icon('list'), 'Atividade'),
-      h('a', { class: 'btn primary', href: `#/p/${shift.id}/relatorio`, id: 'btn-report' }, icon('file'), 'Relatório')));
+      nxt ? h('a', { class: 'btn secondary fit', href: `#/p/${shift.id}/relatorio`, id: 'btn-report' }, icon('file'), 'Relatório') : null,
+      nxt
+        ? h('a', { class: 'btn primary', href: `#/p/${shift.id}/s/${nxt.id}`, id: 'btn-continue' }, icon('play'), h('span', { class: 'ell' }, `Continuar: ${nxt.title}`))
+        : h('a', { class: 'btn primary', href: `#/p/${shift.id}/relatorio`, id: 'btn-report' }, icon('file'), 'Ver relatório')));
   mount(screen);
   requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${(sm.done / sm.total) * 100}%`; }));
 }
@@ -453,9 +566,10 @@ function buildField(f, answers, onChange) {
     refresh = () => btns.forEach((b) => b.setAttribute('aria-pressed', String(answers[f.id] === b.dataset.v)));
   } else {
     const multiline = f.type === 'area';
+    const isNum = f.type === 'num';
     const input = multiline
       ? h('textarea', { class: 'textarea', maxlength: String(MAX_TEXT), rows: '2', 'aria-labelledby': qid, placeholder: f.placeholder || '', enterkeyhint: 'enter' })
-      : h('input', f.type === 'num'
+      : h('input', isNum
         ? { class: 'input', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: String(MAX_NUM_DIGITS), autocomplete: 'off', 'aria-labelledby': qid, placeholder: '0', enterkeyhint: 'done' }
         : { class: 'input', type: 'text', maxlength: String(MAX_TEXT), autocomplete: 'off', 'aria-labelledby': qid, placeholder: f.placeholder || '', enterkeyhint: 'done' });
     const grow = () => { if (multiline) { input.style.height = 'auto'; input.style.height = `${Math.max(76, input.scrollHeight + 2)}px`; } };
@@ -464,14 +578,23 @@ function buildField(f, answers, onChange) {
     } }, 'N/A');
     input.addEventListener('input', () => {
       let v = input.value;
-      if (f.type === 'num') {
+      if (isNum) {
         const cleaned = v.replace(/\D/g, '').slice(0, MAX_NUM_DIGITS);
         if (cleaned !== v) { input.value = cleaned; v = cleaned; }
       }
       grow();
-      setVal(v.trim() === '' ? undefined : (f.type === 'num' ? v : v.trim()));
+      setVal(v.trim() === '' ? undefined : (isNum ? v : v.trim()));
     });
-    control = h('div', { class: 'valuerow' }, input, na);
+    const step = (d) => {
+      const cur = /^\d+$/.test(answers[f.id] || '') ? Number(answers[f.id]) : null;
+      const n = cur === null ? (d > 0 ? 1 : 0) : Math.min(999999, Math.max(0, cur + d));
+      input.value = String(n);
+      setVal(String(n));
+    };
+    control = h('div', { class: 'valuerow' }, input,
+      isNum ? h('button', { type: 'button', class: 'stepbtn', 'aria-label': 'Diminuir', 'data-step': '-1', onclick: () => step(-1) }, icon('minus')) : null,
+      isNum ? h('button', { type: 'button', class: 'stepbtn', 'aria-label': 'Aumentar', 'data-step': '1', onclick: () => step(1) }, icon('plus')) : null,
+      na);
     refresh = () => {
       const v = answers[f.id];
       na.setAttribute('aria-pressed', String(v === NA));
@@ -497,36 +620,98 @@ function buildField(f, answers, onChange) {
   return { el: wrap, update };
 }
 
+function openSectorSheet(shift, currentId) {
+  let sh;
+  const sm = shiftSummary(shift);
+  const fill = h('i');
+  const rows = SECTORS.map((sec, i) => {
+    const status = sectorStatus(shift, sec);
+    const alerts = sectorAlerts(sec, effectiveAnswers(shift, sec.id)).length > 0;
+    return h('button', {
+      class: 'srow', type: 'button', 'data-sector': sec.id, id: `srow-${sec.id}`, 'aria-current': sec.id === currentId ? 'true' : 'false',
+      onclick: () => { sh.close(); if (sec.id !== currentId) go(`#/p/${shift.id}/s/${sec.id}`); },
+    },
+    h('i', { class: `dot ${status === 'done' ? 'done' : (status === 'progress' || status === 'review') ? 'progress' : ''}` }),
+    h('span', { class: 'nm' }, `${i + 1}. ${sec.title}`, h('small', { class: 'stx' }, ST_TEXT[status])),
+    alerts ? h('span', { class: 'tag amber' }, icon('alert'), 'Ocorrência') : null);
+  });
+  const body = h('div', { class: 'stack' },
+    h('div', { class: 'stack sheetsum', style: 'gap:6px' },
+      h('b', { id: 'sheet-count' }, `${sm.done} de ${sm.total} preenchidos${sm.review ? ` · ${sm.review} p/ revisar` : ''}`),
+      h('div', { class: 'pbar' }, fill)),
+    h('div', { class: 'srows' }, rows));
+  sh = sheet({ title: 'Ir para o setor', body });
+  requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${(sm.done / sm.total) * 100}%`; }));
+  const cur = body.querySelector('[aria-current="true"]');
+  const box = body.closest('.sheetbody');
+  if (cur && box) box.scrollTop = cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2;
+}
+
 function screenSector(shift, sector) {
   const idx = SECTORS.findIndex((s) => s.id === sector.id);
   const answers = shift.answers[sector.id] || (shift.answers[sector.id] = {});
   const stLabel = h('span', { class: 'sub', id: 'sector-status' });
   const items = [];
   const alertBox = h('div', { class: 'banner warn', hidden: true, id: 'sector-alerts' });
+  const carried = () => !!shift.sectorMeta[sector.id]?.carried;
+  const reviewNote = h('div', { class: 'banner info', id: 'review-note', hidden: !carried() }, icon('refresh'),
+    h('div', null, h('b', null, 'Informações do plantão anterior. '), 'Confira, altere o que mudou e toque em Confirmar.'));
 
   sess = { shift, sector, dirty: false, startedLogged: false };
 
+  // faixa de progresso fixa + contador
+  const fill = h('i');
+  const stripLabel = h('span', { class: 'striplabel', id: 'strip-label' });
+  const selCount = h('span', { id: 'sel-count' });
+  const bar = h('div', { class: 'pbar thin', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(SECTORS.length) }, fill);
+  const updateStrip = () => {
+    const sm = shiftSummary(shift);
+    stripLabel.textContent = `${sm.done} de ${sm.total} preenchidos${sm.review ? ` · ${sm.review} p/ revisar` : ''}`;
+    selCount.textContent = `${sm.done}/${sm.total}`;
+    bar.setAttribute('aria-valuenow', String(sm.done));
+    requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${(sm.done / sm.total) * 100}%`; }));
+  };
+
+  const confirmBtn = h('button', { class: 'btn green', type: 'button', id: 'btn-confirm-sector', hidden: !carried(), onclick: () => {
+    const meta = shift.sectorMeta[sector.id];
+    meta.carried = false;
+    meta.firstAt = meta.firstAt || nowISO();
+    if (sectorProgress(sector, answers).status === 'done') meta.doneAt = meta.doneAt || nowISO();
+    log(shift, 'done', `${sector.title} revisado e confirmado`, sector.id);
+    sess.dirty = false;
+    sess.startedLogged = false;
+    touch(shift);
+    refreshAll();
+    goNext();
+  } }, icon('check'), 'Confirmar e seguir');
+  const nextBtn = h('button', { class: 'btn primary', type: 'button', id: 'btn-next-sector', hidden: carried(), onclick: () => goNext() }, 'Próximo', icon('right'));
+  function goNext() {
+    const n = nextAttention(shift, idx);
+    go(n ? `#/p/${shift.id}/s/${n.id}` : `#/p/${shift.id}/relatorio`);
+  }
+
   const refreshAll = () => {
-    for (const it of items) {
-      const show = conditionMet(it.f.showIf, answers);
-      it.el.hidden = !show;
-    }
+    for (const it of items) it.el.hidden = !conditionMet(it.f.showIf, answers);
     const prog = sectorProgress(sector, answers);
-    stLabel.textContent = { none: 'Não iniciado', progress: `Em preenchimento · ${prog.missing.length} pendente(s)`, done: 'Preenchido' }[prog.status];
+    const c = carried();
+    stLabel.textContent = c ? 'Revisar informações' : { none: 'Não iniciado', progress: `Em preenchimento · ${prog.missing.length} pendente(s)`, done: 'Preenchido' }[prog.status];
     const al = sectorAlerts(sector, answers);
     alertBox.hidden = al.length === 0;
     alertBox.replaceChildren(icon('alert'), h('div', null, h('b', null, 'Ocorrência: '), al.join(' · ')));
+    reviewNote.hidden = !c;
+    confirmBtn.hidden = !c;
+    nextBtn.hidden = c;
+    updateStrip();
   };
 
-  const onChange = (f) => {
+  const onChange = () => {
     if (!sess) return;
-    const meta = shift.sectorMeta[sector.id] || (shift.sectorMeta[sector.id] = { firstAt: null, doneAt: null });
-    if (!meta.firstAt) {
+    const meta = shift.sectorMeta[sector.id] || (shift.sectorMeta[sector.id] = { firstAt: null, doneAt: null, carried: false });
+    if (!meta.firstAt && !meta.carried) {
       meta.firstAt = nowISO();
       if (shift.status !== 'finalizado') { log(shift, 'update', `${sector.title}: preenchimento iniciado`, sector.id); sess.startedLogged = true; }
     }
     sess.dirty = true;
-    // remove respostas de campos que ficaram ocultos? mantidas para não perder dados ao alternar a resposta
     items.forEach((it) => it.update());
     refreshAll();
     touch(shift);
@@ -540,28 +725,25 @@ function screenSector(shift, sector) {
   refreshAll();
 
   const prev = SECTORS[idx - 1];
-  const next = SECTORS[idx + 1];
-  const nav = (s, label, ic) => (s
-    ? h('a', { class: 'iconbtn', href: `#/p/${shift.id}/s/${s.id}`, 'aria-label': `${label}: ${s.title}` }, icon(ic))
-    : h('span', { class: 'iconbtn', 'aria-hidden': 'true', style: 'opacity:.25' }, icon(ic)));
-
   const screen = h('main', { class: 'screen' },
-    h('header', { class: 'topbar' },
-      h('a', { class: 'iconbtn', href: `#/p/${shift.id}`, 'aria-label': 'Voltar ao painel', id: 'btn-back-panel' }, icon('back')),
-      h('h1', null, `${idx + 1}. ${sector.title}`, stLabel),
-      nav(prev, 'Setor anterior', 'left'), nav(next, 'Próximo setor', 'right')),
+    h('div', { class: 'stickyhead' },
+      h('header', { class: 'topbar' },
+        h('a', { class: 'iconbtn', href: `#/p/${shift.id}`, 'aria-label': 'Voltar ao painel', id: 'btn-back-panel' }, icon('back')),
+        h('h1', null, `${idx + 1}. ${sector.title}`, stLabel),
+        h('button', { class: 'selbtn', type: 'button', id: 'btn-sectors', 'aria-label': 'Escolher outro setor', onclick: () => openSectorSheet(shift, sector.id) }, icon('grid'), selCount)),
+      h('div', { class: 'strip' }, h('div', { class: 'striprow' }, stripLabel, saveBadge()), bar)),
     h('div', { class: 'content' },
       storageBanner(),
+      reviewNote,
       alertBox,
       items.map((it) => it.el),
       h('p', { class: 'note' }, 'Não registre nomes de pacientes nem outros dados pessoais identificáveis.')),
     h('div', { class: 'actionbar' },
-      saveBadge(),
-      h('span', { style: 'flex:1' }),
-      h('a', { class: 'btn secondary fit', href: `#/p/${shift.id}`, id: 'btn-done-sector' }, 'Painel'),
-      next ? h('a', { class: 'btn primary fit', href: `#/p/${shift.id}/s/${next.id}`, id: 'btn-next-sector' }, 'Próximo', icon('right')) : null));
+      prev
+        ? h('a', { class: 'btn secondary sq', href: `#/p/${shift.id}/s/${prev.id}`, id: 'btn-prev-sector', 'aria-label': `Setor anterior: ${prev.title}` }, icon('left'))
+        : h('span', { class: 'btn secondary sq', 'aria-hidden': 'true', style: 'opacity:.35' }, icon('left')),
+      confirmBtn, nextBtn));
   mount(screen);
-  // textareas só medem altura corretamente depois de inseridas
   items.forEach((it) => it.update());
 }
 
@@ -572,9 +754,12 @@ function screenReport(shift) {
   const text = reportText(shift);
   const miss = missingList(shift);
   const alerts = alertsList(shift);
-  const totalMissing = miss.reduce((n, m) => n + m.labels.length, 0);
+  const reviewCount = miss.filter((m) => m.status === 'review').length;
+  const totalMissing = miss.filter((m) => m.status !== 'review').reduce((n, m) => n + m.labels.length, 0);
   const imgBox = h('div', { class: 'imgpages' });
   let urls = [];
+  const previewEl = h('div', { class: 'preview', id: 'report-preview', html: whatsappToHtml(text) });
+  attachWaCopy(previewEl);
 
   const busy = (btn, on) => { btn.disabled = on; };
 
@@ -630,11 +815,12 @@ function screenReport(shift) {
       alerts.length
         ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${alerts.length} setor(es) com ocorrência: `), alerts.map((a) => a.title).join(', ')))
         : h('p', null, 'Nenhuma ocorrência operacional registrada.'),
+      reviewCount ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e sairão como "Não informado" no relatório.')) : null,
       totalMissing
         ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${totalMissing} campo(s) não informado(s) `), `em ${miss.length} setor(es). O relatório será finalizado como parcial, com esses campos marcados como "Não informado".`))
         : h('p', null, 'Todos os campos foram informados.'),
       h('div', { class: 'field' }, h('label', { for: 'finalize-by' }, 'Finalização confirmada por'), sel),
-      h('p', null, 'Depois de finalizar, ainda é possível corrigir os setores; as alterações ficam registradas na atividade.'));
+      h('p', null, 'Depois de finalizar, ainda é possível corrigir os setores e gerar o relatório de novo.'));
     const ok = await dialog({
       title: 'Finalizar plantão', body,
       actions: [{ label: 'Cancelar', value: false, variant: 'ghost' }, { label: 'Finalizar plantão', value: true, variant: 'green' }],
@@ -643,7 +829,7 @@ function screenReport(shift) {
     shift.status = 'finalizado';
     shift.finalizedAt = nowISO();
     shift.finalizedBy = sel.value;
-    log(shift, 'finish', `Relatório finalizado${totalMissing ? ' (parcial)' : ''}`, null, sel.value);
+    log(shift, 'finish', `Relatório finalizado${totalMissing || reviewCount ? ' (parcial)' : ''}`, null, sel.value);
     touch(shift);
     await flush();
     toast('Plantão finalizado', 'ok');
@@ -654,19 +840,22 @@ function screenReport(shift) {
     topbar({ title: 'Relatório', sub: shiftTitle(shift), back: `#/p/${shift.id}`, right: saveBadge() }),
     h('div', { class: 'content' },
       storageBanner(),
+      reviewCount
+        ? h('div', { class: 'banner warn', id: 'review-warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e saem como "Não informado" neste relatório. Abra o painel e confirme cada setor.'))
+        : null,
       shift.status === 'finalizado'
         ? h('div', { class: 'banner warn', id: 'final-banner' }, icon('flag'), h('div', null, `Finalizado em ${dateTimeBR(shift.finalizedAt)}${shift.finalizedBy ? ` · confirmado por ${shift.finalizedBy}` : ''}.`))
         : null,
-      totalMissing
+      miss.length
         ? h('details', { class: 'miss', id: 'missing-box' },
-          h('summary', null, h('span', null, icon('alert'), ` ${totalMissing} campo(s) não informado(s) em ${miss.length} setor(es)`), icon('chevron')),
-          h('ul', null, miss.map((m) => h('li', null, h('b', { style: 'color:var(--text)' }, m.title), `: ${m.labels.join('; ')}`))))
-        : h('div', { class: 'banner', id: 'missing-box', style: 'background:rgba(61,190,139,.12);border:1px solid rgba(61,190,139,.4);color:#9be3c4' }, icon('check'), 'Todos os campos informados.'),
+          h('summary', null, h('span', null, icon('alert'), ` ${totalMissing + reviewCount} pendência(s) em ${miss.length} setor(es)`), icon('chevron')),
+          h('ul', null, miss.map((m) => h('li', null, h('b', null, m.title), `: ${m.labels.join('; ')}`))))
+        : h('div', { class: 'banner ok', id: 'missing-box' }, icon('check'), 'Todos os campos informados.'),
       alerts.length
         ? h('div', { class: 'banner warn', id: 'alerts-box' }, icon('alert'), h('div', null, h('b', null, 'Ocorrências: '), alerts.map((a) => `${a.title} (${a.alerts.join(', ')})`).join(' · ')))
         : null,
       h('div', { class: 'sectiontitle' }, 'Prévia do relatório'),
-      h('div', { class: 'preview', id: 'report-preview', html: whatsappToHtml(text) }),
+      previewEl,
       h('div', { class: 'outputs' }, btnCopy, btnWa, btnImg, btnPdf),
       imgBox,
       h('p', { class: 'note' }, 'O WhatsApp abre para você escolher a conversa; o aplicativo não envia a mensagem sozinho.')),
@@ -677,113 +866,19 @@ function screenReport(shift) {
 }
 
 // =====================================================================
-// Atividade
-// =====================================================================
-function screenActivity(shift) {
-  const items = [...shift.activity].reverse();
-  mount(h('main', { class: 'screen' },
-    topbar({ title: 'Atividade do plantão', sub: shiftTitle(shift), back: `#/p/${shift.id}` }),
-    h('div', { class: 'content' },
-      items.length
-        ? h('ul', { class: 'timeline', id: 'timeline' }, items.map((a) => h('li', { class: a.type },
-          h('span', { class: 'when' }, dateTimeBR(a.t)), a.text, a.by ? ` — ${a.by}` : '')))
-        : h('p', { class: 'note' }, 'Nenhuma atividade registrada.'),
-      h('p', { class: 'note' }, 'Mais recentes primeiro. Alterações não são atribuídas a um profissional, exceto a confirmação da finalização.'))));
-}
-
-// =====================================================================
-// Histórico e backup
-// =====================================================================
-function screenHistory(shifts) {
-  const list = h('div', { class: 'stack', id: 'history-list' });
-  const draw = (all) => {
-    list.replaceChildren(...(all.length ? all.map((s) => {
-      const sm = shiftSummary(s);
-      return h('div', { class: 'card hitem', 'data-id': s.id },
-        h('div', { class: 'top' },
-          h('div', null, h('h3', null, shiftTitle(s)), h('div', { class: 'meta' }, `${hoursText(s)} · ${joinNames(s.nurses)}`)),
-          s.status === 'em_andamento' ? h('span', { class: 'tag pend' }, 'Em andamento') : h('span', { class: 'tag ok' }, 'Finalizado')),
-        h('div', { class: 'meta' }, `${sm.done}/${sm.total} setores preenchidos${sm.alerts ? ` · ${sm.alerts} com ocorrência` : ''}`),
-        h('div', { class: 'acts' },
-          h('a', { class: 'btn primary small', href: `#/p/${s.id}`, 'data-act': 'open' }, 'Abrir'),
-          h('a', { class: 'btn secondary small', href: `#/p/${s.id}/relatorio`, 'data-act': 'report' }, 'Relatório'),
-          h('button', { class: 'btn ghost small', type: 'button', style: 'flex:0 0 auto', 'aria-label': 'Excluir plantão', 'data-act': 'delete', onclick: async () => {
-            const ok = await confirmDialog({
-              title: 'Excluir plantão?',
-              message: `${shiftTitle(s)} e todas as informações preenchidas serão apagados deste dispositivo. Esta ação não pode ser desfeita. Se precisar, exporte um backup antes.`,
-              confirmText: 'Excluir', danger: true,
-            });
-            if (!ok) return;
-            try { await storage.deleteShift(s.id); } catch (e) { toast('Não foi possível excluir.', 'error'); return; }
-            const fresh = await storage.listShifts();
-            draw(fresh);
-            toast('Plantão excluído', 'ok');
-          } }, icon('trash'))));
-    }) : [h('p', { class: 'note', id: 'history-empty' }, 'Nenhum plantão registrado neste dispositivo.')]));
-  };
-  draw(shifts);
-
-  const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, id: 'import-file', onchange: async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      if (file.size > 10 * 1024 * 1024) throw new Error('O arquivo é grande demais para ser um backup válido.');
-      const { shifts: incoming, rejected } = parseBackup(await file.text());
-      const current = await storage.listShifts();
-      const map = new Map(current.map((s) => [s.id, s]));
-      const toWrite = incoming.filter((s) => !map.has(s.id) || s.updatedAt > map.get(s.id).updatedAt);
-      const added = toWrite.filter((s) => !map.has(s.id)).length;
-      const replaced = toWrite.length - added;
-      const skipped = incoming.length - toWrite.length;
-      if (!toWrite.length) { toast(`Nada a importar: os ${incoming.length} plantão(ões) do arquivo já estão aqui com a mesma versão ou mais nova.`, 'ok'); return; }
-      const ok = await confirmDialog({
-        title: 'Importar backup?',
-        message: `${added} novo(s), ${replaced} atualizado(s) por versão mais recente${skipped ? `, ${skipped} ignorado(s) por já existirem` : ''}${rejected ? `. ${rejected} registro(s) inválido(s) serão descartados` : ''}. Nenhum plantão existente será apagado.`,
-        confirmText: 'Importar',
-      });
-      if (!ok) return;
-      const r = await storage.saveMany(toWrite);
-      if (!r.persisted) toast('Importado apenas na memória: armazenamento indisponível.', 'error');
-      else toast(`Backup importado: ${added} novo(s), ${replaced} atualizado(s)`, 'ok');
-      draw(await storage.listShifts());
-    } catch (err) {
-      toast(err.message || 'Não foi possível importar o arquivo.', 'error');
-    }
-  } });
-
-  mount(h('main', { class: 'screen' },
-    topbar({ title: 'Histórico', back: '#/' }),
-    h('div', { class: 'content' },
-      storageBanner(),
-      list,
-      h('div', { class: 'sectiontitle' }, 'Backup'),
-      h('div', { class: 'card stack' },
-        h('div', { class: 'row' },
-          h('button', { class: 'btn secondary', type: 'button', id: 'btn-export-backup', onclick: async () => {
-            try {
-              const all = await storage.listShifts();
-              if (!all.length) { toast('Não há plantões para exportar.', 'error'); return; }
-              downloadBlob(new Blob([buildBackup(all)], { type: 'application/json' }), `plantao-control-backup-${todayISO()}.json`);
-              toast('Backup exportado', 'ok');
-            } catch (e) { toast('Não foi possível exportar o backup.', 'error'); }
-          } }, icon('download'), 'Exportar'),
-          h('button', { class: 'btn secondary', type: 'button', id: 'btn-import-backup', onclick: () => fileIn.click() }, icon('upload'), 'Importar'),
-          fileIn),
-        h('p', { class: 'note' }, 'Os dados ficam armazenados neste dispositivo e neste navegador. Não há sincronização entre dispositivos; use o backup para transferir ou guardar uma cópia.')))));
-}
-
-// =====================================================================
 // Rotas
 // =====================================================================
 async function route() {
+  document.querySelectorAll('.overlay').forEach((o) => { if (o.querySelector('.sheet')) o.remove(); });
   commitSector(true);
   await flush();
   const parts = (location.hash.replace(/^#/, '') || '/').split('/').filter(Boolean);
   try {
     if (!parts.length) return screenHome(await storage.listShifts());
-    if (parts[0] === 'novo') return screenOpening(null, await storage.listShifts());
-    if (parts[0] === 'historico') return screenHistory(await storage.listShifts());
+    if (parts[0] === 'novo') {
+      const all = await storage.listShifts();
+      return screenOpening(null, all, parts[1] ? all.find((x) => x.id === parts[1]) : undefined);
+    }
     if (parts[0] === 'p' && parts[1]) {
       const shift = await storage.getShift(parts[1]);
       if (!shift) { toast('Plantão não encontrado.', 'error'); go('#/'); return; }
@@ -791,7 +886,6 @@ async function route() {
       if (!sub) return screenPanel(shift);
       if (sub === 'abertura') return screenOpening(shift, []);
       if (sub === 'relatorio') return screenReport(shift);
-      if (sub === 'atividade') return screenActivity(shift);
       if (sub === 's' && SECTOR_BY_ID[parts[3]]) return screenSector(shift, SECTOR_BY_ID[parts[3]]);
     }
     go('#/');

@@ -34,6 +34,10 @@ const P = {
   heart: '<path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 0 0-7.1 7.1L12 21l8.8-8.3a5 5 0 0 0 0-7.1z"/>',
   cross: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  minus: '<path d="M5 12h14"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.5-4M4 5v4h4M4 13a8 8 0 0 0 14.5 4M20 19v-4h-4"/>',
+  logo: '<path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 0 0-7.1 7.1L12 21l8.8-8.3a5 5 0 0 0 0-7.1z"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
   back: '<path d="M15 6l-6 6 6 6"/>',
   left: '<path d="M15 6l-6 6 6 6"/>',
   right: '<path d="m9 6 6 6-6 6"/>',
@@ -140,4 +144,39 @@ export function uuid() {
   if (crypto.randomUUID) return crypto.randomUUID();
   const b = crypto.getRandomValues(new Uint8Array(16));
   return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+// ---------- Painel inferior (sheet) ----------
+export function sheet({ title, body }) {
+  const prevFocus = document.activeElement;
+  const close = () => {
+    overlay.classList.remove('open');
+    setTimeout(() => overlay.remove(), 160);
+    document.removeEventListener('keydown', onKey);
+    if (prevFocus && prevFocus.focus) prevFocus.focus();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const card = h('div', { class: 'dlg sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+    h('div', { class: 'sheethead' }, h('h2', null, title),
+      h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Fechar', onclick: close }, icon('x'))),
+    h('div', { class: 'sheetbody' }, body));
+  const overlay = h('div', { class: 'overlay', onclick: (e) => { if (e.target === overlay) close(); } }, card);
+  document.body.append(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+  document.addEventListener('keydown', onKey);
+  return { close };
+}
+
+// Ao copiar texto selecionado da prévia, devolve a sintaxe do WhatsApp (*negrito*, _itálico_).
+export function attachWaCopy(el) {
+  el.addEventListener('copy', (e) => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !el.contains(sel.anchorNode)) return;
+    const box = document.createElement('div');
+    box.append(sel.getRangeAt(0).cloneContents());
+    box.querySelectorAll('strong').forEach((n) => n.replaceWith(`*${n.textContent}*`));
+    box.querySelectorAll('em').forEach((n) => n.replaceWith(`_${n.textContent}_`));
+    e.clipboardData.setData('text/plain', box.textContent);
+    e.preventDefault();
+  });
 }

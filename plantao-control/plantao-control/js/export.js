@@ -64,12 +64,11 @@ const W = 1080;
 const H = 1528; // proporção A4 (também usada no PDF)
 const M = 60;
 const C = {
-  bg: '#0A1226', card: '#141C2C', line: '#27324A', text: '#E8EEF7', muted: '#8E9BB3',
-  cyan: '#2BC4E8', green: '#3DBE8B', amber: '#F5A524', gray: '#5B6783',
+  bg: '#FFFFFF', card: '#F3F5F8', line: '#E3E7EC', text: '#14181F', muted: '#5D6877', red: '#C8102E', green: '#12945A',
+  amber: '#D97706', amberSoft: '#FFF1D6', blue: '#2563EB', gray: '#98A2B0',
 };
-const FONT = 'Inter, -apple-system, "Segoe UI", Roboto, sans-serif';
-const STATUS_COLOR = { done: C.green, progress: C.cyan, none: C.gray };
-const STATUS_TEXT = { done: 'Preenchido', progress: 'Em preenchimento', none: 'Não iniciado' };
+const FONT = '"Plus Jakarta Sans", -apple-system, "Segoe UI", Roboto, sans-serif';
+const STATUS_COLOR = { done: C.green, progress: C.blue, review: C.blue, none: C.gray };
 
 function wrapLines(ctx, textValue, maxW) {
   const out = [];
@@ -109,9 +108,9 @@ function roundRect(ctx, x, y, w, h, r) {
 export async function renderPages(shift) {
   try {
     await Promise.all([
-      document.fonts.load(`400 28px Inter`),
-      document.fonts.load(`600 28px Inter`),
-      document.fonts.load(`700 28px Inter`),
+      document.fonts.load(`400 28px "Plus Jakarta Sans"`),
+      document.fonts.load(`600 28px "Plus Jakarta Sans"`),
+      document.fonts.load(`700 28px "Plus Jakarta Sans"`),
     ]);
   } catch { /* usa fonte alternativa */ }
 
@@ -130,8 +129,10 @@ export async function renderPages(shift) {
     pages.push(canvas);
     ctx.textBaseline = 'alphabetic';
     if (first) {
-      ctx.fillStyle = C.cyan;
-      ctx.font = `700 22px ${FONT}`;
+      ctx.fillStyle = C.red; ctx.fillRect(0, 0, W * 0.5, 14);
+      ctx.fillStyle = C.green; ctx.fillRect(W * 0.5, 0, W * 0.5, 14);
+      ctx.fillStyle = C.red;
+      ctx.font = `800 22px ${FONT}`;
       ctx.fillText('PLANTÃO CONTROL', M, 84);
       ctx.fillStyle = C.text;
       ctx.font = `700 44px ${FONT}`;
@@ -153,6 +154,7 @@ export async function renderPages(shift) {
       }
       y = ty + 30;
     } else {
+      ctx.fillStyle = C.red; ctx.fillRect(0, 0, W, 8);
       ctx.fillStyle = C.muted;
       ctx.font = `500 22px ${FONT}`;
       ctx.fillText(`${header.title} · ${header.date}`, M, 72);
@@ -203,7 +205,7 @@ export async function renderPages(shift) {
         ctx.font = `700 20px ${FONT}`;
         const tw = ctx.measureText(tag).width + 28;
         const tx = W - M - tw - 16;
-        ctx.fillStyle = 'rgba(245,165,36,0.16)';
+        ctx.fillStyle = C.amberSoft;
         roundRect(ctx, tx, y + 14, tw, 38, 19);
         ctx.fill();
         ctx.fillStyle = C.amber;
@@ -230,8 +232,7 @@ export async function renderPages(shift) {
       if (r.indent) { ctx.fillStyle = C.gray; ctx.fillText('↳', M + 28, ry + 26); ctx.fillStyle = C.muted; }
       for (const l of m.labelLines) { ry += 34; ctx.fillText(l, m.lx, ry - 6); }
       let vc = C.text;
-      if (r.kind === 'ni') vc = C.gray;
-      else if (r.kind === 'sim') vc = C.cyan;
+      if (r.kind === 'ni') vc = C.muted;
       else if (r.kind === 'na') vc = C.muted;
       ctx.fillStyle = vc;
       ctx.font = `${r.kind === 'ni' ? '500' : '700'} 30px ${FONT}`;

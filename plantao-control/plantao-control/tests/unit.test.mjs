@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SECTORS, NA, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary } from '../js/sectors.js';
+import { SECTORS, NA, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary, sectorStatus, nextAttention, effectiveAnswers } from '../js/sectors.js';
 import { openingMessage, reportText, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
 import { normalizeShift, parseBackup, buildBackup, validateIdentification, isValidDate, sanitizeAnswers } from '../js/validation.js';
 
@@ -92,14 +92,15 @@ test('texto neutro ("nenhuma", "0") não gera ocorrência', () => {
   for (const t of ['Paciente caiu da maca', 'Atraso de 2h', 'Falta de lençol']) assert.equal(isMeaningfulText(t), true, t);
 });
 
-test('mensagem de apresentação segue o modelo', () => {
-  assert.equal(openingMessage(baseShift()),
-    'Boa noite!\n\nIniciando plantão administrativo noturno\n\nData: 13/11/2026\n\nHorário: 19 às 07hrs\n\nEnf: Rubens e Alana');
+test('mensagem de apresentação: sem linhas em branco e com negrito', () => {
+  const m = openingMessage(baseShift());
+  assert.equal(m, 'Boa noite!\n*Iniciando plantão administrativo noturno*\n*Data:* 13/11/2026\n*Horário:* 19 às 07hrs\n*Enf:* Rubens e Alana');
+  assert.ok(!m.includes('\n\n'));
   const mt = openingMessage(baseShift({ type: 'MT', start: '07:00', end: '19:00', nurses: ['Ana'] }));
   assert.match(mt, /^Bom dia!/);
-  assert.match(mt, /plantão administrativo diurno/);
-  assert.match(mt, /Horário: 07 às 19hrs/);
-  assert.match(mt, /Enf: Ana$/);
+  assert.match(mt, /plantão administrativo diurno\*/);
+  assert.match(mt, /\*Horário:\* 07 às 19hrs/);
+  assert.match(mt, /\*Enf:\* Ana$/);
   assert.equal(greeting('13:00'), 'Boa tarde');
   assert.equal(joinNames(['A', 'B', 'C']), 'A, B e C');
 });
@@ -114,12 +115,14 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
     last = pos;
   });
   // vazio: cada pergunta visível aparece como Não informado
-  assert.ok(text.includes('• Equipe completa?: _Não informado_'));
-  assert.ok(text.includes('• Leitos bloqueados/interditados: _Não informado_'));
+  assert.ok(text.includes('• *Equipe completa?* _Não informado_'));
+  assert.ok(text.includes('• *Leitos bloqueados/interditados:* _Não informado_'));
+  assert.ok(!text.includes('\n\n'), 'relatório sem linhas em branco');
+  assert.ok(!/^\s+$/m.test(text));
   // nada de dados fixos do exemplo vazando
   const other = reportText(baseShift({ nurses: ['Zélia'], date: '2027-01-02' }));
   assert.ok(!other.includes('Rubens') && !other.includes('Alana') && !other.includes('13/11/2026'));
-  assert.ok(other.includes('Enf: Zélia') && other.includes('02/01/2027'));
+  assert.ok(other.includes('*Enf:* Zélia') && other.includes('02/01/2027'));
 });
 
 test('relatório preenchido: respostas, acentos, caracteres especiais e texto longo', () => {
@@ -132,13 +135,15 @@ test('relatório preenchido: respostas, acentos, caracteres especiais e texto lo
     },
   });
   const t = reportText(sh);
-  assert.ok(t.includes('• Equipe completa?: *Sim*'));
-  assert.ok(t.includes('◦ Detalhamento da ausência: Técnica "João" faltou — cobertura & plantão extra: 50% às 22h'));
-  assert.ok(t.includes('Observações:\n    linha 1\n    linha 2'));
+  assert.ok(t.includes('• *Equipe completa?* Sim'));
+  assert.ok(t.includes('◦ *Detalhamento da ausência:* Técnica "João" faltou — cobertura & plantão extra: 50% às 22h'));
+  assert.ok(t.includes('• *Observações:*\n      linha 1\n      linha 2'));
   assert.ok(t.includes('Noradrenalina, Amiodarona'));
   assert.ok(t.includes(long));
-  assert.ok(t.includes('• Leitos disponíveis: 0'));
-  assert.ok(t.includes('◦ Motivo: Manutenção do ar-condicionado') || t.includes('• Motivo: Manutenção do ar-condicionado'));
+  assert.ok(t.includes('• *Leitos disponíveis:* 0'));
+  assert.ok(t.includes('◦ *Motivo:* Manutenção do ar-condicionado'));
+  // todo marcador de negrito está balanceado em cada linha
+  for (const line of t.split('\n')) assert.equal((line.match(/\*/g) || []).length % 2, 0, line);
   // URL do WhatsApp preserva acentos e símbolos
   const url = `https://wa.me/?text=${encodeURIComponent(t)}`;
   assert.equal(decodeURIComponent(url.split('text=')[1]), t);
@@ -151,12 +156,14 @@ test('pendências listam o que falta sem preencher artificialmente', () => {
   const por = m.find((x) => x.id === 'portaria');
   assert.deepEqual(por.labels, ['Ausência no plantão?', 'Cobertura realizada?']); // Observações é opcional
   const sum = shiftSummary(sh);
+  assert.equal(sum.review, 0);
   assert.equal(sum.done, 0);
   assert.equal(sum.progress, 1);
 });
 
 test('prévia: escapa HTML e converte negrito', () => {
   assert.equal(whatsappToHtml('*Sim* <b>x</b> & _Não informado_'), '<strong>Sim</strong> &lt;b&gt;x&lt;/b&gt; &amp; <em>Não informado</em>');
+  assert.equal(whatsappToHtml('• *Equipe completa?* _Não informado_'), '• <strong>Equipe completa?</strong> <em>Não informado</em>');
 });
 
 test('validação de identificação', () => {
@@ -215,4 +222,49 @@ test('normalizeShift rejeita registros malformados', () => {
   assert.throws(() => normalizeShift({ ...baseShift(), nurses: [] }));
   assert.throws(() => normalizeShift({ ...baseShift(), start: '7h' }));
   assert.doesNotThrow(() => normalizeShift(baseShift()));
+});
+
+test('setor copiado do plantão anterior: estado "revisar", fora do relatório até confirmar', () => {
+  const por = SECTORS.find((s) => s.id === 'portaria');
+  const answers = { portaria: { equipe_completa: 'nao', ausencia: 'nao', cobertura: 'sim' } };
+  const sh = baseShift({ answers, sectorMeta: { portaria: { firstAt: null, doneAt: null, carried: true } } });
+  assert.equal(sectorStatus(sh, por), 'review');
+  assert.deepEqual(effectiveAnswers(sh, 'portaria'), {});
+  const sum = shiftSummary(sh);
+  assert.equal(sum.review, 1);
+  assert.equal(sum.done, 0);
+  assert.equal(sum.alerts, 0, 'ocorrência antiga não conta até confirmar');
+  const t = reportText(sh);
+  assert.ok(t.includes('• *Equipe completa?* _Não informado_'), 'dado não confirmado não vai para o relatório');
+  assert.ok(missingList(sh).find((m) => m.id === 'portaria').labels[0].includes('Aguardando revisão'));
+  // confirmado: passa a valer
+  const ok = baseShift({ answers, sectorMeta: { portaria: { firstAt: null, doneAt: null, carried: false } } });
+  assert.equal(sectorStatus(ok, por), 'done');
+  assert.equal(shiftSummary(ok).done, 1);
+  assert.equal(shiftSummary(ok).alerts, 1);
+  assert.ok(reportText(ok).includes('• *Equipe completa?* Não'));
+});
+
+test('próximo setor pendente: pula preenchidos, dá a volta e retorna null quando tudo pronto', () => {
+  const full = (id) => {
+    const sec = SECTORS.find((s) => s.id === id); const a = {};
+    for (const f of sec.fields) a[f.id] = f.type === 'yn' ? 'nao' : f.type === 'num' ? '0' : 'x';
+    return a;
+  };
+  const answers = {};
+  for (const s of SECTORS) answers[s.id] = full(s.id);
+  const sh = baseShift({ answers });
+  assert.equal(nextAttention(sh, -1), null);
+  delete answers.recepcao; delete answers.uti2;
+  assert.equal(nextAttention(sh, -1).id, 'recepcao');
+  assert.equal(nextAttention(sh, 1).id, 'uti2');          // depois de Recepção → UTI 2
+  assert.equal(nextAttention(sh, 10).id, 'recepcao');      // depois de UTI 2 dá a volta
+  assert.equal(nextAttention(sh, 0).id, 'recepcao');
+});
+
+test('backup preserva setores a revisar e a origem do plantão', () => {
+  const s = baseShift({ carriedFrom: 'zzzzzzzz-1111', answers: { portaria: { cobertura: 'sim' } }, sectorMeta: { portaria: { firstAt: null, doneAt: null, carried: true } } });
+  const { shifts } = parseBackup(buildBackup([s]));
+  assert.equal(shifts[0].sectorMeta.portaria.carried, true);
+  assert.equal(shifts[0].carriedFrom, 'zzzzzzzz-1111');
 });

@@ -76,21 +76,19 @@ export function reportHeader(shift) {
   return {
     title: `PLANTÃO ADMINISTRATIVO — ${shiftLabel(shift.type).toUpperCase()}`,
     date: formatDateBR(shift.date),
-    hours: hoursText(shift),
-    nurses: joinNames(shift.nurses),
   };
 }
 
-// Texto para WhatsApp: SEM linhas em branco. Perguntas e títulos em *negrito*; campo vazio = "-".
+// Texto para WhatsApp: linha em branco só ENTRE os setores (dentro do setor, sem). Perguntas e títulos em *negrito*; campo vazio = "-".
 export function reportText(shift) {
   const h = reportHeader(shift);
   const lines = [
     `*${h.title}*`,
     `*Data:* ${h.date}`,
-    `*Horário:* ${h.hours}`,
-    `*Enf:* ${h.nurses}`,
   ];
+  // Horário e enfermeiro ficam só na mensagem de apresentação. Cada setor é separado por uma linha em branco.
   for (const sec of reportModel(shift)) {
+    lines.push('');
     lines.push(`*${sec.index}. ${sec.title.toUpperCase()}*`);
     for (const r of sec.rows) {
       const pre = r.indent ? '   ◦ ' : '• ';

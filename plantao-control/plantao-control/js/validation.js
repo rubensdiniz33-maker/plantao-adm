@@ -1,5 +1,5 @@
 // Regras de validação: plantão, respostas e arquivos de backup.
-import { SECTORS, SECTOR_BY_ID, NA, MAX_TEXT, MAX_NUM_DIGITS } from './sectors.js';
+import { SECTORS, SECTOR_BY_ID, defaultFields, NA, MAX_TEXT, MAX_NUM_DIGITS } from './sectors.js';
 
 export const APP_ID = 'plantao-control';
 export const SCHEMA = 1;
@@ -54,6 +54,12 @@ export function sanitizeAnswers(raw) {
     for (const f of s.fields) {
       const v = cleanAnswerValue(f, src[f.id]);
       if (v !== undefined) dst[f.id] = v;
+    }
+    // Respostas de perguntas que o admin removeu (ou personalizadas de outro aparelho) são preservadas, só não aparecem.
+    for (const [k, v] of Object.entries(src)) {
+      if (k in dst || s.fields.some((f) => f.id === k)) continue;
+      if (!/^c_[a-z0-9]{3,12}$/.test(k) && !defaultFields(s.id).some((f) => f.id === k)) continue;
+      if (typeof v === 'string' && v.length <= MAX_TEXT) dst[k] = v;
     }
     if (Object.keys(dst).length) out[s.id] = dst;
   }

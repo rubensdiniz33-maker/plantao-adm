@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SECTORS, NA, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary, sectorStatus, nextAttention, effectiveAnswers } from '../js/sectors.js';
+import { SECTORS, NA, applyFormConfig, sanitizeFormConfig, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary, sectorStatus, nextAttention, effectiveAnswers } from '../js/sectors.js';
 import { finalReportText, openingMessage, reportText, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
 import { normalizeShift, parseBackup, buildBackup, validateIdentification, isValidDate, sanitizeAnswers } from '../js/validation.js';
 
@@ -35,7 +35,7 @@ test('todas as perguntas originais preservadas (rótulos exatos, na ordem)', () 
   expected.uco = expected.uti1;
   for (const s of SECTORS) {
     // originais = todos exceto os complementares acrescentados (added:true)
-    const orig = s.fields.filter((f) => !f.added).map((f) => f.label);
+    const orig = s.fields.filter((f) => !f.added && f.id !== 'ocorrencias_relevantes').map((f) => f.label);
     const exp = expected[s.id];
     assert.deepEqual(orig, exp, `setor ${s.id}`);
   }
@@ -117,12 +117,56 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
   // vazio: cada pergunta visível aparece como Não informado
   assert.ok(text.includes('• *Equipe completa?* -'));
   assert.ok(text.includes('• *Leitos bloqueados/interditados:* -'));
-  assert.ok(!text.includes('\n\n'), 'relatório sem linhas em branco');
-  assert.ok(!/^\s+$/m.test(text));
-  // nada de dados fixos do exemplo vazando
+  assert.ok(!/\n\n\n/.test(text), 'no máximo uma linha em branco');
+  // nada de dados fixos do exemplo vazando; relatório NÃO leva enfermeiro nem horário (ficam na apresentação)
   const other = reportText(baseShift({ nurses: ['Zélia'], date: '2027-01-02' }));
   assert.ok(!other.includes('Rubens') && !other.includes('Alana') && !other.includes('13/11/2026'));
-  assert.ok(other.includes('*Enf:* Zélia') && other.includes('02/01/2027'));
+  assert.ok(other.includes('02/01/2027') && !other.includes('Zélia') && !other.includes('Enf:') && !other.includes('Horário'));
+});
+
+test('relatório: uma linha em branco entre setores e nenhuma dentro do setor', () => {
+  const lines = reportText(baseShift()).split('\n');
+  SECTORS.forEach((s, i) => {
+    const at = lines.indexOf(`*${i + 1}. ${s.title.toUpperCase()}*`);
+    assert.equal(lines[at - 1], '', `linha em branco antes de ${s.title}`);
+    assert.notEqual(lines[at + 1], '');
+  });
+  assert.equal(lines.filter((l) => l === '').length, SECTORS.length);
+  assert.ok(!reportText(baseShift()).startsWith('\n') && !reportText(baseShift()).endsWith('\n'));
+});
+
+test('todos os setores têm "Ocorrências relevantes" por último e ela é opcional', () => {
+  for (const s of SECTORS) {
+    const last = s.fields.at(-1);
+    assert.equal(last.label, 'Ocorrências relevantes', s.id);
+    assert.ok(last.optional, s.id);
+  }
+  const t = reportText(baseShift());
+  assert.equal(t.split('*Ocorrências relevantes:*').length - 1, 13);
+});
+
+test('config do formulário: renomear, remover (com filhos), adicionar e restaurar; respostas antigas preservadas', () => {
+  const por = SECTORS.find((x) => x.id === 'portaria');
+  const before = por.fields.map((f) => f.id);
+  const cfg = applyFormConfig({ version: 1, sectors: { portaria: { removed: ['ausencia'], labels: { cobertura: 'Cobertura ok?' }, added: [{ id: 'c_abc123', label: 'Nova pergunta', type: 'num', optional: false }, { id: 'ruim', label: 'x', type: 'yn' }] } } });
+  const ids = por.fields.map((f) => f.id);
+  assert.ok(!ids.includes('ausencia') && !ids.includes('ausencia_detalhe'), 'pai e filho removidos');
+  assert.equal(por.fields.find((f) => f.id === 'cobertura').label, 'Cobertura ok?');
+  assert.equal(ids.at(-2), 'c_abc123'); assert.equal(ids.at(-1), 'ocorrencias_relevantes');
+  assert.ok(!ids.includes('ruim'), 'id inválido descartado'); assert.equal(cfg.sectors.portaria.added.length, 1);
+  const kept = sanitizeAnswers({ portaria: { ausencia: 'sim', c_abc123: '7' } });
+  assert.equal(kept.portaria.ausencia, 'sim', 'resposta de pergunta removida é preservada'); assert.equal(kept.portaria.c_abc123, '7');
+  const r = reportText(baseShift({ answers: { portaria: { c_abc123: '7' } } }));
+  assert.ok(r.includes('• *Nova pergunta:* 7') && !r.includes('Ausência no plantão'));
+  applyFormConfig(null);
+  assert.deepEqual(por.fields.map((f) => f.id), before, 'restaurar volta ao padrão');
+  assert.deepEqual(sanitizeFormConfig({ sectors: 5 }), { version: 1, sectors: {} });
+});
+
+test('senha do admin: aceita a correta (sem diferenciar maiúsculas/espaços) e recusa as demais', async () => {
+  const { checkPassword } = await import('../js/formconfig.js');
+  assert.ok(checkPassword('hc2026') && checkPassword('  HC2026 '));
+  assert.ok(!checkPassword('') && !checkPassword('hc2025') && !checkPassword('admin'));
 });
 
 test('relatório preenchido: respostas, acentos, caracteres especiais e texto longo', () => {

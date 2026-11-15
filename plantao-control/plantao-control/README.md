@@ -1,4 +1,4 @@
-# PLANTÃO ADM — versão 2.0
+# PLANTÃO ADM — versão 2.1
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
 **Prioridade de uso:** o objetivo final é **Copiar** o relatório ou **encaminhá-lo ao WhatsApp** — esses são os dois botões principais (fixos no rodapé do relatório). Imagem/PDF são secundários.
@@ -34,10 +34,26 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 | `js/storage.js` | IndexedDB (com aviso explícito se indisponível) |
 | `js/report.js` | Mensagem de apresentação e relatório (texto WhatsApp, modelo estruturado) |
 | `js/export.js` | Copiar, WhatsApp (`wa.me`), imagens PNG multipágina, PDF |
+| `js/formconfig.js`, `form-config.json`, `tools-hash.mjs` | Edição do formulário, senha do admin e arquivo publicado com a configuração |
 | `js/app.js`, `js/ui.js` | Telas, rotas, salvamento automático, componentes |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA |
 | `fonts/` | Plus Jakarta Sans (local; licença OFL em `PLUS-JAKARTA-LICENSE.txt`) |
 | `tests/` | Testes unitários (Node) e de ponta a ponta (Playwright/Chromium) |
+
+## Novidades da versão 2.1
+
+- **Ocorrências relevantes em todos os 13 setores** (campo de texto opcional, último de cada setor; preenchido de verdade, ele marca o setor com ocorrência).
+- **Relatório final:** uma **linha em branco entre os setores** (dentro do setor continua sem espaços) e **sem enfermeiro e horário** (já vão na mensagem de apresentação). Imagem/PDF também.
+- **Relatório abre na exibição do WhatsApp** (negrito real, sem asteriscos); o texto cru fica na aba **Editar texto**.
+- **Editar o formulário (admin):** ícone de ajustes no canto da Home → senha → renomear, remover/restaurar e adicionar perguntas em cada setor (Sim/Não/N/A, número, texto curto ou longo; opcional ou não). Perguntas novas entram antes de "Ocorrências relevantes". Remover uma pergunta **não apaga respostas já registradas**; se remover uma pergunta "pai", as condicionais dela somem junto.
+- **Crédito discreto:** "Desenvolvido por Enfermeiro Rubens Diniz" no rodapé da Home e do admin.
+
+### Senha e alcance das alterações do formulário
+
+- **Senha inicial: `hc2026`** (não diferencia maiúsculas). Ela é só uma **trava de uso**: o app é estático e sem servidor, então quem inspecionar o código consegue contorná-la. Não use como segurança forte.
+- **Trocar a senha:** `node tools-hash.mjs NOVA_SENHA` imprime um código; cole-o em `ADMIN_HASH` no arquivo `js/formconfig.js` e publique de novo.
+- **As alterações ficam no aparelho em que foram feitas.** Para valerem para todos: no admin toque em **Exportar**, substitua o arquivo `form-config.json` da raiz do projeto pelo exportado e publique na Vercel. Cada aparelho usa a versão mais nova entre o arquivo publicado e a edição local. "Restaurar formulário padrão" limpa a edição do aparelho.
+- Relatórios de plantões antigos passam a usar o formulário atual ao serem reabertos (perguntas removidas deixam de aparecer neles).
 
 ## Novidades da versão 2.0
 
@@ -74,14 +90,19 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 ## Testes
 
 ```bash
-npm test                              # 24 testes de lógica (Node)
+npm test                              # 28 testes de lógica (Node)
 node tests/serve.mjs 5173 &           # servidor
-python3 tests/e2e.py                  # 131 verificações no Chromium (Playwright)
+python3 tests/e2e.py                  # 156 verificações no Chromium (Playwright)
 CSP=1 node tests/serve.mjs 5174 &     # mesma suíte sob os cabeçalhos/CSP do vercel.json:
 BASE_URL=http://localhost:5174 python3 tests/e2e.py
 ```
 
-### Relatório de testes executados (14/11/2026, versão 2.0)
+### Relatório de testes executados (14/11/2026, versão 2.1)
+
+**Versão 2.1 — executado e aprovado** (28/28 unitários e 156/156 de ponta a ponta, também sob a CSP da Vercel): ocorrências relevantes nos 13 setores; 13 linhas em branco só entre setores; relatório sem enfermeiro/horário; abertura em modo WhatsApp sem asteriscos; crédito e ícone de admin na Home; senha errada recusada / correta aceita / sair tranca; remover, renomear e adicionar pergunta refletidos no formulário e no relatório; persistência ao recarregar; exportar/importar/restaurar a configuração; respostas de perguntas removidas preservadas; 320 px sem rolagem horizontal.
+**Não testado na 2.1:** aparelho real; o fluxo "publicar `form-config.json` na Vercel e abrir em outro aparelho" (testei exportar e importar o arquivo, não a publicação).
+
+#### Resultado da versão 2.0
 
 **Executados e aprovados** (Chrome headless emulando iPhone 390×844, toque e `pt-BR`; 24/24 unitários e 131/131 de ponta a ponta, também sob a CSP do `vercel.json`):
 - **Revisão 2:** nome e favicon declarados e acessíveis; Home com botão ≥ 80 px e poucos elementos; contador por posição 8/13→13/13 na Enfermaria SUS, setores em ordem, e Próximo no 13/13 abrindo o relatório; campos vazios com `-` e nenhuma ocorrência de "Não informado"; cabeçalho do formulário ≤ 72 px, primeiro campo no topo e avisos de ocorrência/revisão no fim; relatório editável (Copiar e WhatsApp enviam exatamente o texto editado, edição persiste ao recarregar, aviso de texto desatualizado, usar dados atuais, restaurar original, texto apagado); Copiar e WhatsApp fixos no rodapé, visíveis sem rolar, ≥ 56 px.
@@ -101,6 +122,7 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 
 ## Limitações conhecidas
 
+- A senha do admin é apenas uma trava (ver acima). Alterações do formulário são por aparelho, a menos que o `form-config.json` seja publicado.
 - Imagem e PDF não incluem alterações digitadas à mão no relatório (usam os dados dos setores).
 
 - Dados ficam **só neste aparelho e navegador** (sem sincronização). O iOS pode limpar dados de sites não instalados após longa inatividade: **instale na Tela de Início e exporte backups periodicamente**.

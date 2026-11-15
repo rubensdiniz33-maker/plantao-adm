@@ -25,6 +25,7 @@ export const SECTORS = [
       area('ausencia_detalhe', 'Detalhamento da ausência', { showIf: { field: 'ausencia', eq: 'sim' }, added: true }),
       yn('cobertura', 'Cobertura realizada?'),
       area('observacoes', 'Observações', { optional: true }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -33,6 +34,7 @@ export const SECTORS = [
       yn('equipe_completa', 'Equipe completa?', { alert: 'nao', alertMsg: 'Equipe incompleta' }),
       area('pendencias', 'Pendências administrativas relevantes', { alert: 'text', alertMsg: 'Pendências administrativas' }),
       area('reclamacoes', 'Reclamações registradas', { alert: 'text', alertMsg: 'Reclamações registradas' }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -41,6 +43,7 @@ export const SECTORS = [
       yn('falta_critico', 'Medicamentos críticos em falta?', { alert: 'sim', alertMsg: 'Medicamento crítico em falta' }),
       text('falta_quais', 'Especificar os medicamentos em falta', { showIf: { field: 'falta_critico', eq: 'sim' }, added: true }),
       area('ocorrencias', 'Ocorrências relacionadas ao abastecimento/dispensação', { alert: 'text', alertMsg: 'Ocorrência de abastecimento/dispensação' }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -49,6 +52,7 @@ export const SECTORS = [
       yn('enxoval_suficiente', 'Enxoval suficiente para o plantão?', { alert: 'nao', alertMsg: 'Enxoval insuficiente' }),
       num('quantidade', 'Quantidade estimada disponível'),
       yn('reposicao_urgente', 'Necessidade de reposição urgente?', { alert: 'sim', alertMsg: 'Reposição urgente necessária' }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -59,6 +63,7 @@ export const SECTORS = [
       yn('equip_falha', 'Equipamentos com falha?', { alert: 'sim', alertMsg: 'Equipamento com falha' }),
       text('equip_identificacao', 'Equipamento com falha', { showIf: { field: 'equip_falha', eq: 'sim' }, added: true }),
       area('equip_descricao', 'Descrição da falha', { showIf: { field: 'equip_falha', eq: 'sim' }, added: true }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -67,6 +72,7 @@ export const SECTORS = [
       text('medico_sobreaviso', 'Médico de sobreaviso'),
       area('previsao_exames', 'Previsão de exames a serem realizados'),
       area('intercorrencias', 'Intercorrências', { alert: 'text', alertMsg: 'Intercorrências' }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -78,6 +84,7 @@ export const SECTORS = [
       area('atrasos', 'Atrasos', { alert: 'text', alertMsg: 'Atrasos' }),
       yn('equipe_completa', 'Equipe completa?', { alert: 'nao', alertMsg: 'Equipe incompleta' }),
       yn('autoclave', 'Autoclave em funcionamento', { alert: 'nao', alertMsg: 'Autoclave fora de funcionamento' }),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -90,6 +97,7 @@ export const SECTORS = [
       ...bloqueados(),
       text('medico', 'Médico de plantão (FDS)'),
       text('enfermeiro', 'Enfermeiro(a) de plantão'),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   {
@@ -100,6 +108,7 @@ export const SECTORS = [
       ...bloqueados(),
       text('medico', 'Médico de plantão (FDS)'),
       text('enfermeiro', 'Enfermeiro(a) de plantão'),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
   ...[
@@ -116,6 +125,7 @@ export const SECTORS = [
       num('aguard_transf', 'Pacientes aguardando transferência'),
       text('medico', 'Médico de plantão'),
       text('enfermeiro', 'Enfermeiro(a) de plantão'),
+      area('ocorrencias_relevantes', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   })),
   {
@@ -128,10 +138,57 @@ export const SECTORS = [
       text('maior_boarding', 'Maior tempo de boarding no PA', { placeholder: 'Ex.: 5h30' }),
       yn('equipe_completa', 'Equipe completa?', { alert: 'nao', alertMsg: 'Equipe incompleta' }),
       text('medico', 'Médico de plantão'),
-      area('ocorrencias', 'Ocorrências relevantes', { alert: 'text', alertMsg: 'Ocorrências relevantes' }),
+      area('ocorrencias', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
 ];
+
+// ---------- Personalização do formulário (admin) ----------
+// Config: { version:1, sectors: { [id]: { removed:[fieldId], labels:{fieldId:texto}, added:[{id,label,type,optional}] } } }
+const DEFAULT_FIELDS = Object.fromEntries(SECTORS.map((sec) => [sec.id, sec.fields.map((f) => ({ ...f }))]));
+export const defaultFields = (id) => DEFAULT_FIELDS[id].map((f) => ({ ...f }));
+const FIELD_TYPES = ['yn', 'num', 'text', 'area'];
+
+export function sanitizeFormConfig(raw) {
+  const out = { version: 1, sectors: {} };
+  if (!raw || typeof raw !== 'object' || typeof raw.sectors !== 'object' || !raw.sectors) return out;
+  for (const sec of SECTORS) {
+    const c = raw.sectors[sec.id];
+    if (!c || typeof c !== 'object') continue;
+    const known = new Set(DEFAULT_FIELDS[sec.id].map((f) => f.id));
+    const removed = Array.isArray(c.removed) ? [...new Set(c.removed.filter((x) => typeof x === 'string' && known.has(x)))] : [];
+    const labels = {};
+    if (c.labels && typeof c.labels === 'object') {
+      for (const [k, v] of Object.entries(c.labels)) if (known.has(k) && typeof v === 'string' && v.trim()) labels[k] = v.trim().slice(0, 200);
+    }
+    const added = [];
+    const seen = new Set();
+    for (const a of Array.isArray(c.added) ? c.added : []) {
+      if (!a || typeof a.id !== 'string' || !/^c_[a-z0-9]{3,12}$/.test(a.id) || seen.has(a.id)) continue;
+      if (typeof a.label !== 'string' || !a.label.trim() || !FIELD_TYPES.includes(a.type)) continue;
+      seen.add(a.id);
+      added.push({ id: a.id, label: a.label.trim().slice(0, 200), type: a.type, optional: !!a.optional });
+    }
+    if (removed.length || Object.keys(labels).length || added.length) out.sectors[sec.id] = { removed, labels, added };
+  }
+  return out;
+}
+
+// Aplica a configuração: muda sector.fields NO LUGAR (quem importou SECTORS enxerga a mudança).
+// Perguntas condicionais cujo "pai" foi removido também somem. Perguntas novas entram antes de "Ocorrências relevantes".
+export function applyFormConfig(raw) {
+  const cfg = sanitizeFormConfig(raw);
+  for (const sec of SECTORS) {
+    const c = cfg.sectors[sec.id] || { removed: [], labels: {}, added: [] };
+    let fields = defaultFields(sec.id).filter((f) => !c.removed.includes(f.id)).map((f) => (c.labels[f.id] ? { ...f, label: c.labels[f.id] } : f));
+    fields = fields.filter((f) => !f.showIf || fields.some((p) => p.id === f.showIf.field));
+    const extra = c.added.map((a) => ({ id: a.id, label: a.label, type: a.type, optional: a.optional, custom: true }));
+    const at = fields.findIndex((f) => f.id === 'ocorrencias_relevantes' || (sec.id === 'pa' && f.id === 'ocorrencias'));
+    if (at >= 0) fields.splice(at, 0, ...extra); else fields.push(...extra);
+    sec.fields.splice(0, sec.fields.length, ...fields);
+  }
+  return cfg;
+}
 
 export const SECTOR_BY_ID = Object.fromEntries(SECTORS.map((s) => [s.id, s]));
 export const MAX_TEXT = 1000;

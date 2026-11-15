@@ -141,7 +141,7 @@ export async function renderPages(shift) {
       for (const l of tl) { ctx.fillText(l, M, ty); ty += 54; }
       ctx.font = `500 30px ${FONT}`;
       ctx.fillStyle = C.muted;
-      const info = [['Data', header.date], ['Horário', header.hours], ['Enf', header.nurses]];
+      const info = [['Data', header.date]];
       ty += -6;
       for (const [k, v] of info) {
         ctx.fillStyle = C.muted;

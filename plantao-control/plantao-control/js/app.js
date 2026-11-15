@@ -1,7 +1,8 @@
 // PLANTÃO ADM — interface, rotas e fluxo do plantão.
 import * as storage from './storage.js';
+import * as formcfg from './formconfig.js';
 import {
-  SECTORS, SECTOR_BY_ID, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts,
+  SECTORS, SECTOR_BY_ID, defaultFields, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts,
   sectorStatus, effectiveAnswers, nextAttention, shiftSummary,
 } from './sectors.js';
 import {
@@ -182,7 +183,8 @@ function screenHome(shifts) {
       h('div', { class: 'logo' }, icon('logo')),
       h('div', null,
         h('h1', { class: 'brand' }, 'PLANTÃO ', h('span', null, 'ADM')),
-        h('div', { class: 'datehero' }, longDate()))),
+        h('div', { class: 'datehero' }, longDate())),
+      h('a', { class: 'iconbtn adminbtn', href: '#/admin', id: 'btn-admin', 'aria-label': 'Editar formulário (acesso com senha)' }, icon('settings'))),
     storageBanner(),
   ];
   const startNew = async () => {
@@ -229,9 +231,11 @@ function screenHome(shifts) {
         h('a', { class: 'btn secondary', href: `#/p/${last.id}`, id: 'btn-last-open', onclick: () => sh.close() }, icon('edit'), 'Editar'))) });
   } }, icon('clock'), 'Último plantão'));
   links.push(h('button', { class: 'linkbtn', type: 'button', id: 'btn-backup', onclick: () => openBackupSheet() }, icon('download'), 'Backup'));
-  children.push(h('div', { class: 'spacer' }), h('div', { class: 'linkrow' }, links));
+  children.push(h('div', { class: 'spacer' }), h('div', { class: 'linkrow' }, links), credit());
   mount(h('main', { class: 'screen home' }, children));
 }
+
+const credit = () => h('p', { class: 'credit', id: 'credit' }, icon('heart'), 'Desenvolvido por Enfermeiro Rubens Diniz');
 
 // ---------- Backup (exportar / importar) ----------
 function openBackupSheet() {
@@ -759,7 +763,8 @@ function screenReport(shift) {
   // Editor do texto final: o enfermeiro revisa e pode digitar alterações; o que ele escreve é o que Copiar/WhatsApp enviam.
   const editor = h('textarea', { class: 'textarea reporttext', id: 'report-text', spellcheck: 'false', autocapitalize: 'off', 'aria-label': 'Texto do relatório (editável)' });
   editor.value = fr.text;
-  const previewEl = h('div', { class: 'preview', id: 'report-preview', hidden: true });
+  editor.hidden = true;
+  const previewEl = h('div', { class: 'preview', id: 'report-preview', html: whatsappToHtml(fr.text) });
   attachWaCopy(previewEl);
   const getText = () => editor.value;
   const grow = () => { editor.style.height = 'auto'; editor.style.height = `${Math.max(240, editor.scrollHeight + 4)}px`; };
@@ -793,8 +798,8 @@ function screenReport(shift) {
     paintEdit();
   });
 
-  const tabEdit = h('button', { class: 'tab on', type: 'button', id: 'tab-edit', role: 'tab', 'aria-selected': 'true' }, icon('edit'), 'Editar texto');
-  const tabFmt = h('button', { class: 'tab', type: 'button', id: 'tab-fmt', role: 'tab', 'aria-selected': 'false' }, icon('check'), 'Como fica no WhatsApp');
+  const tabEdit = h('button', { class: 'tab', type: 'button', id: 'tab-edit', role: 'tab', 'aria-selected': 'false' }, icon('edit'), 'Editar texto');
+  const tabFmt = h('button', { class: 'tab on', type: 'button', id: 'tab-fmt', role: 'tab', 'aria-selected': 'true' }, icon('check'), 'Como fica no WhatsApp');
   const setTab = (fmt) => {
     tabEdit.classList.toggle('on', !fmt); tabFmt.classList.toggle('on', fmt);
     tabEdit.setAttribute('aria-selected', String(!fmt)); tabFmt.setAttribute('aria-selected', String(fmt));
@@ -902,10 +907,10 @@ function screenReport(shift) {
         ? h('div', { class: 'banner warn', id: 'alerts-box' }, icon('alert'), h('div', null, h('b', null, 'Ocorrências: '), alerts.map((a) => `${a.title} (${a.alerts.join(', ')})`).join(' · ')))
         : null,
       staleBox,
-      h('div', { class: 'tabs', role: 'tablist' }, tabEdit, tabFmt, editBadge),
+      h('div', { class: 'tabs', role: 'tablist' }, tabFmt, tabEdit, editBadge),
       editor,
       previewEl,
-      h('div', { class: 'editfoot' }, restoreBtn, h('span', { class: 'note' }, 'Revise e altere o texto se precisar. Copiar e WhatsApp enviam exatamente o que está aqui.')),
+      h('div', { class: 'editfoot' }, restoreBtn, h('span', { class: 'note' }, 'Para alterar a mensagem, toque em Editar texto. Copiar e WhatsApp enviam exatamente o que você vê aqui.')),
       shift.status === 'em_andamento'
         ? h('button', { class: 'btn green block', type: 'button', id: 'btn-finalize', onclick: finalize }, icon('flag'), 'Finalizar plantão')
         : null,
@@ -922,6 +927,146 @@ function screenReport(shift) {
 }
 
 // =====================================================================
+// Admin: editar o formulário (protegido por senha)
+// =====================================================================
+let adminOk = false;
+const TYPE_LABEL = { yn: 'Sim / Não / N/A', num: 'Número', text: 'Texto curto', area: 'Texto longo' };
+
+function screenAdminRoute(sub) {
+  if (!adminOk) return screenAdminLogin();
+  if (sub && SECTOR_BY_ID[sub]) return screenAdminSector(SECTOR_BY_ID[sub]);
+  return screenAdmin();
+}
+
+function screenAdminLogin() {
+  const msg = h('p', { class: 'err-inline', id: 'admin-error', role: 'alert', hidden: true }, 'Senha incorreta.');
+  const input = h('input', { class: 'input', type: 'password', id: 'admin-pass', autocomplete: 'off', 'aria-label': 'Senha do administrador', placeholder: 'Senha', enterkeyhint: 'go' });
+  const enter = () => {
+    if (formcfg.checkPassword(input.value)) { adminOk = true; screenAdmin(); return; }
+    msg.hidden = false; input.value = ''; input.focus();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') enter(); });
+  mount(h('main', { class: 'screen' },
+    topbar({ title: 'Editar formulário', back: '#/' }),
+    h('div', { class: 'content' },
+      h('div', { class: 'card stack' },
+        h('h2', null, 'Acesso do administrador'),
+        h('p', { class: 'note' }, 'Digite a senha para adicionar, remover ou renomear perguntas dos setores.'),
+        input, msg,
+        h('button', { class: 'btn primary lg block', type: 'button', id: 'admin-enter', onclick: enter }, icon('check'), 'Entrar')),
+      credit())));
+  input.focus();
+}
+
+const sectorEdits = (cfg, id) => {
+  const c = cfg.sectors[id];
+  return c ? c.removed.length + Object.keys(c.labels).length + c.added.length : 0;
+};
+
+function screenAdmin() {
+  const cfg = formcfg.getConfig();
+  const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, id: 'cfg-file', onchange: async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const c = formcfg.parseConfigText(await f.text());
+      if (!(await confirmDialog({ title: 'Importar configuração?', message: 'A configuração atual do formulário será substituída pela do arquivo (somente neste aparelho).', confirmText: 'Importar' }))) return;
+      formcfg.setConfig(c); toast('Configuração importada', 'ok'); screenAdmin();
+    } catch (err) { toast(err.message || 'Não foi possível importar.', 'error'); }
+  } });
+  mount(h('main', { class: 'screen' },
+    topbar({ title: 'Editar formulário', sub: `Em uso: ${formcfg.configSource()}`, back: '#/',
+      right: h('button', { class: 'linkbtn', type: 'button', id: 'admin-exit', onclick: () => { adminOk = false; go('#/'); } }, 'Sair') }),
+    h('div', { class: 'content' },
+      h('p', { class: 'note' }, 'Escolha um setor para renomear, remover ou adicionar perguntas. As alterações valem neste aparelho assim que você as faz.'),
+      h('div', { class: 'sectors' }, SECTORS.map((sec, i) => {
+        const n = sectorEdits(cfg, sec.id);
+        return h('a', { class: 'sec done', href: `#/admin/${sec.id}`, id: `adm-${sec.id}` },
+          h('span', { class: 'ico' }, icon(sec.icon)),
+          h('span', { class: 'txt' }, h('span', { class: 'name' }, `${i + 1}. ${sec.title}`), h('span', { class: 'st' }, `${sec.fields.length} pergunta(s)${n ? ` · ${n} alteração(ões)` : ''}`)),
+          icon('chevron', 'chev'));
+      })),
+      h('div', { class: 'card stack' },
+        h('b', null, 'Valer para todos os aparelhos'),
+        h('p', { class: 'note' }, 'Cada aparelho guarda a sua própria versão. Para que todos os enfermeiros recebam as mudanças: exporte o arquivo, substitua o `form-config.json` do projeto e publique de novo na Vercel.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn secondary', type: 'button', id: 'cfg-export', onclick: () => {
+            downloadBlob(new Blob([formcfg.exportConfigText()], { type: 'application/json' }), 'form-config.json');
+            toast('Arquivo form-config.json exportado', 'ok');
+          } }, icon('download'), 'Exportar'),
+          h('button', { class: 'btn secondary', type: 'button', id: 'cfg-import', onclick: () => fileIn.click() }, icon('upload'), 'Importar'), fileIn),
+        h('button', { class: 'btn ghost', type: 'button', id: 'cfg-reset', onclick: async () => {
+          if (!(await confirmDialog({ title: 'Restaurar formulário padrão?', message: 'Todas as perguntas adicionadas, removidas ou renomeadas voltam ao modelo original (neste aparelho). Respostas já registradas não são apagadas.', confirmText: 'Restaurar', danger: true }))) return;
+          formcfg.setConfig(null); toast('Formulário padrão restaurado', 'ok'); screenAdmin();
+        } }, icon('refresh'), 'Restaurar formulário padrão')),
+      credit())));
+}
+
+function screenAdminSector(sector) {
+  const cfg = formcfg.getConfig();
+  const c = cfg.sectors[sector.id] || { removed: [], labels: {}, added: [] };
+  const commit = (next, msg) => {
+    cfg.sectors[sector.id] = next;
+    if (!formcfg.setConfig(cfg)) toast('Não foi possível salvar neste aparelho.', 'error');
+    else if (msg) toast(msg, 'ok');
+  };
+  const defs = defaultFields(sector.id);
+  const rows = defs.map((f) => {
+    const removed = c.removed.includes(f.id);
+    const inp = h('input', { class: 'input', type: 'text', maxlength: '200', value: c.labels[f.id] || f.label, 'aria-label': `Texto da pergunta: ${f.label}`, 'data-fid': f.id, disabled: removed,
+      onchange: (e) => {
+        const v = e.target.value.trim();
+        const labels = { ...c.labels };
+        if (!v || v === f.label) delete labels[f.id]; else labels[f.id] = v;
+        commit({ ...c, labels }, 'Salvo'); screenAdminSector(sector);
+      } });
+    return h('div', { class: `fieldcard admrow${removed ? ' removed' : ''}`, 'data-adm': f.id },
+      h('div', { class: 'qrow' }, h('span', { class: 'state' }, `${TYPE_LABEL[f.type]}${f.showIf ? ' · condicional' : ''}${f.optional ? ' · opcional' : ''}`)),
+      inp,
+      h('button', { class: `btn ${removed ? 'secondary' : 'ghost'} small`, type: 'button', 'data-act': removed ? 'restore' : 'remove', onclick: () => {
+        const removedList = removed ? c.removed.filter((x) => x !== f.id) : [...c.removed, f.id];
+        commit({ ...c, removed: removedList }, removed ? 'Pergunta restaurada' : 'Pergunta removida'); screenAdminSector(sector);
+      } }, icon(removed ? 'refresh' : 'trash'), removed ? 'Restaurar pergunta' : 'Remover pergunta'));
+  });
+  const addedRows = c.added.map((a) => {
+    const inp = h('input', { class: 'input', type: 'text', maxlength: '200', value: a.label, 'aria-label': `Texto da pergunta: ${a.label}`, 'data-fid': a.id,
+      onchange: (e) => {
+        const v = e.target.value.trim();
+        if (!v) { e.target.value = a.label; return; }
+        commit({ ...c, added: c.added.map((x) => (x.id === a.id ? { ...x, label: v } : x)) }, 'Salvo'); screenAdminSector(sector);
+      } });
+    return h('div', { class: 'fieldcard admrow added', 'data-adm': a.id },
+      h('div', { class: 'qrow' }, h('span', { class: 'state' }, `Nova · ${TYPE_LABEL[a.type]}${a.optional ? ' · opcional' : ''}`)),
+      inp,
+      h('button', { class: 'btn ghost small', type: 'button', 'data-act': 'delete', onclick: () => {
+        commit({ ...c, added: c.added.filter((x) => x.id !== a.id) }, 'Pergunta excluída'); screenAdminSector(sector);
+      } }, icon('trash'), 'Excluir pergunta'));
+  });
+
+  const nl = h('input', { class: 'input', type: 'text', maxlength: '200', id: 'new-label', placeholder: 'Texto da nova pergunta', 'aria-label': 'Texto da nova pergunta' });
+  const nt = h('select', { class: 'select', id: 'new-type', 'aria-label': 'Tipo de resposta' }, Object.entries(TYPE_LABEL).map(([v, l]) => h('option', { value: v }, l)));
+  const no = h('input', { type: 'checkbox', id: 'new-optional' });
+  const add = () => {
+    const label = nl.value.trim();
+    if (!label) { toast('Digite o texto da pergunta.', 'error'); nl.focus(); return; }
+    const id = `c_${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`;
+    commit({ ...c, added: [...c.added, { id, label, type: nt.value, optional: no.checked }] }, 'Pergunta adicionada'); screenAdminSector(sector);
+  };
+  nl.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+
+  mount(h('main', { class: 'screen' },
+    topbar({ title: sector.title, sub: 'Editar perguntas', back: '#/admin' }),
+    h('div', { class: 'content tight' },
+      h('p', { class: 'note' }, 'Edite o texto, remova ou restaure perguntas. Perguntas novas entram antes de "Ocorrências relevantes". Remover não apaga respostas já registradas.'),
+      rows, addedRows,
+      h('div', { class: 'card stack', id: 'add-box' },
+        h('b', null, 'Adicionar pergunta'), nl, nt,
+        h('label', { class: 'checkrow' }, no, ' Opcional (não impede o setor de ficar preenchido)'),
+        h('button', { class: 'btn primary block', type: 'button', id: 'btn-add-q', onclick: add }, icon('plus'), 'Adicionar pergunta')),
+      credit())));
+}
+
+// =====================================================================
 // Rotas
 // =====================================================================
 async function route() {
@@ -931,6 +1076,7 @@ async function route() {
   const parts = (location.hash.replace(/^#/, '') || '/').split('/').filter(Boolean);
   try {
     if (!parts.length) return screenHome(await storage.listShifts());
+    if (parts[0] === 'admin') return screenAdminRoute(parts[1]);
     if (parts[0] === 'novo') {
       const all = await storage.listShifts();
       return screenOpening(null, all, parts[1] ? all.find((x) => x.id === parts[1]) : undefined);
@@ -962,6 +1108,7 @@ window.addEventListener('error', () => toast('Ocorreu um erro inesperado.', 'err
 window.addEventListener('unhandledrejection', () => toast('Ocorreu um erro inesperado.', 'error'));
 
 (async function start() {
+  await formcfg.loadFormConfig();
   const st = await storage.init();
   if (!st.persistent) setSave('volatile');
   else await recoverJournal();

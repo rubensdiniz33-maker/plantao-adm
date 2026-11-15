@@ -208,13 +208,15 @@ def main():
         check('Enfermaria SUS: contador acompanha cada Próximo (8/13 → 13/13)', seq == ['8/13', '9/13', '10/13', '11/13', '12/13', '13/13'], str(seq))
         check('Setores percorridos em ordem', titles_seen == TITLES[7:], str(titles_seen))
         check('Último setor: botão vira "Ver relatório"', 'Ver relatório' in pg.inner_text('#btn-next-sector'))
-        pg.click('#btn-next-sector'); pg.wait_for_url('**/relatorio'); pg.wait_for_selector('#report-text')
+        pg.click('#btn-next-sector'); pg.wait_for_url('**/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         check('No 13/13 o Próximo FINALIZA no relatório (não volta ao início)', pg.url.endswith('/relatorio'))
 
         # ---- relatório
         report = rawtext(pg)
         pg.screenshot(path=f'{SHOTS}/12-relatorio.png')
-        check('Relatório: sem linhas em branco', '\n\n' not in report and not re.search(r'^\s*$', report, re.M), repr(report[:120]))
+        check('Relatório: linha em branco só ENTRE setores (13), nunca dentro do setor', report.count('\n\n') == 13 and '\n\n\n' not in report and all(report.split('\n\n')[i + 1].startswith(f'*{i + 1}. ') for i in range(13)), repr(report[:140]))
+        check('Relatório: sem enfermeiro nem horário (já estão na apresentação)', 'Enf:' not in report and 'Horário' not in report and 'Rubens' not in report and 'Alana' not in report)
+        check('Relatório: "Ocorrências relevantes" em todos os 13 setores', report.count('*Ocorrências relevantes:*') + report.count('*Ocorrências relevantes*') == 13, str(report.count('Ocorrências relevantes')))
         pos = [report.find(f'{i+1}. {t.upper()}') for i, t in enumerate(TITLES)]
         check('Relatório: 13 setores em ordem', all(x >= 0 for x in pos) and pos == sorted(pos), str(pos))
         faltando = [m for m in ['Equipe completa?','Ausência no plantão?','Cobertura realizada?','Pendências administrativas relevantes','Reclamações registradas','Medicamentos críticos em falta?','Enxoval suficiente para o plantão?','Quantidade estimada disponível','Necessidade de reposição urgente?','Exames indispensáveis?','Equipamentos com falha?','Médico de sobreaviso','Previsão de exames a serem realizados','Intercorrências','Procedimentos realizados','Procedimentos suspensos','Atrasos','Autoclave em funcionamento','Leitos disponíveis','Altas do dia ainda não efetuadas','Pacientes aguardando transferência','Pacientes em diálise','Leitos bloqueados/interditados','Médico de plantão (FDS)','Enfermeiro(a) de plantão','Quantidade de pacientes em observação','Quantidade de pacientes aguardando atendimento','Quantidade de pacientes em boarding','Maior tempo de boarding no PA','Ocorrências relevantes'] if m not in report]
@@ -234,11 +236,11 @@ def main():
         # prévia formatada
         fm = fmttext(pg)
         bold = pg.eval_on_selector_all('#report-preview strong', 'els => els.map(e => e.textContent)')
-        check('Prévia WhatsApp: perguntas em negrito', 'Equipe completa?' in bold and 'Leitos disponíveis:' in bold and '1. PORTARIA/ACOLHIMENTO' in bold and 'Enf:' in bold, str(bold[:8]))
+        check('Prévia WhatsApp: perguntas em negrito', 'Equipe completa?' in bold and 'Leitos disponíveis:' in bold and '1. PORTARIA/ACOLHIMENTO' in bold and 'Enf:' not in bold, str(bold[:8]))
         pg.click('#tab-edit')
         pg.click('#btn-copy-report')
         clip = pg.evaluate('navigator.clipboard.readText()')
-        check('Copiar: texto WhatsApp com negrito e sem linhas em branco', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\n*Data:* 13/11/2026\n*Horário:* 19 às 07hrs\n*Enf:* Rubens e Alana\n*1. PORTARIA/ACOLHIMENTO*\n• *Equipe completa?* Sim') and '\n\n' not in clip and '*13. PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
+        check('Copiar: texto WhatsApp com negrito e parágrafo entre setores', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\n*Data:* 13/11/2026\n\n*1. PORTARIA/ACOLHIMENTO*\n• *Equipe completa?* Sim') and '\n\n\n' not in clip and '*13. PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
         check('Copiar: asteriscos balanceados em todas as linhas', all(l.count('*') % 2 == 0 for l in clip.split('\n')))
         pg.click('#tab-fmt')
         pg.evaluate("() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('report-preview')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }")
@@ -253,7 +255,7 @@ def main():
 
         # --- edição manual do relatório
         check('Edição: sem marca "Editado" antes de alterar', not pg.locator('#edited-tag').is_visible() and not pg.locator('#btn-restore').is_visible())
-        pg.click('#report-text'); pg.keyboard.press('Control+End'); pg.keyboard.type('\n*Obs. do plantão:* revisado manualmente')
+        pg.click('#tab-edit'); pg.click('#report-text'); pg.keyboard.press('Control+End'); pg.keyboard.type('\n*Obs. do plantão:* revisado manualmente')
         pg.wait_for_timeout(400)
         check('Edição: aparece "Editado" e "Restaurar texto original"', pg.locator('#edited-tag').is_visible() and pg.locator('#btn-restore').is_visible())
         pg.click('#btn-copy-report'); clip_ed = pg.evaluate('navigator.clipboard.readText()')
@@ -262,24 +264,24 @@ def main():
         opened = pg.evaluate('window.__opened'); full = urllib.parse.unquote(opened[0].split('text=', 1)[1]) if opened else ''
         check('WhatsApp envia exatamente o texto editado', full == clip_ed)
         pg.click('#tab-fmt'); check('Prévia do WhatsApp reflete a edição', 'revisado manualmente' in pg.inner_text('#report-preview') and 'Obs. do plantão:' in pg.eval_on_selector_all('#report-preview strong', 'els => els.map(e => e.textContent)')); pg.click('#tab-edit')
-        pg.reload(); pg.wait_for_selector('#report-text')
+        pg.reload(); pg.wait_for_selector('#report-text', state='attached')
         check('Edição persiste ao recarregar', rawtext(pg) == clip_ed and pg.locator('#edited-tag').is_visible())
         # dados mudam depois da edição → aviso de texto desatualizado
         pg.goto(shift_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
         pg.fill('[data-field="quantidade"] input', '121'); pg.wait_for_timeout(500)
-        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text')
+        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         check('Dados mudaram após edição: avisa e mantém a versão editada', pg.locator('#stale-box').is_visible() and rawtext(pg) == clip_ed)
         pg.click('#btn-regen'); pg.wait_for_timeout(300)
         check('"Usar dados atuais" descarta a edição e atualiza o texto', 'Quantidade estimada disponível: 121' in plain(pg) and 'revisado manualmente' not in rawtext(pg) and not pg.locator('#stale-box').is_visible() and not pg.locator('#edited-tag').is_visible())
-        pg.click('#report-text'); pg.keyboard.press('Control+End'); pg.keyboard.type(' X'); pg.wait_for_timeout(300)
+        pg.click('#tab-edit'); pg.click('#report-text'); pg.keyboard.press('Control+End'); pg.keyboard.type(' X'); pg.wait_for_timeout(300)
         pg.click('#btn-restore'); pg.wait_for_selector('.dlg:has-text("Restaurar texto original?")'); pg.click('.dlg:has-text("Restaurar texto original?") .btn.primary'); pg.wait_for_timeout(300)
         check('Restaurar texto original volta ao texto gerado', not rawtext(pg).endswith(' X') and not pg.locator('#edited-tag').is_visible())
         pg.goto(shift_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
         pg.fill('[data-field="quantidade"] input', '120'); pg.wait_for_timeout(500)
-        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text')
-        pg.click('#report-text'); pg.keyboard.press('Control+A'); pg.keyboard.press('Delete'); pg.wait_for_timeout(300)
+        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        pg.click('#tab-edit'); pg.click('#report-text'); pg.keyboard.press('Control+A'); pg.keyboard.press('Delete'); pg.wait_for_timeout(300)
         pg.click('#btn-copy-report'); check('Texto apagado: Copiar avisa que o relatório está vazio', 'vazio' in pg.inner_text('#toast'))
-        pg.reload(); pg.wait_for_selector('#report-text')
+        pg.reload(); pg.wait_for_selector('#report-text', state='attached')
         check('Apagar tudo e recarregar volta ao texto gerado (não perde o relatório)', '1. PORTARIA/ACOLHIMENTO' in rawtext(pg))
         pg.click('#more-formats summary')
         pg.click('#btn-image'); pg.wait_for_selector('.imgpages img', timeout=15000)
@@ -302,7 +304,7 @@ def main():
         check('Finalização: data/hora e responsável', 'Alana' in pg.inner_text('#final-banner') and re.search(r'\d{2}/\d{2}/\d{4} \d{2}:\d{2}', pg.inner_text('#final-banner')) is not None)
         pg.goto(shift_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
         pg.fill('[data-field="quantidade"] input', '130'); pg.wait_for_timeout(500)
-        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text')
+        pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         check('Correção após finalizar atualiza o relatório', 'Quantidade estimada disponível: 130' in plain(pg))
         # atividade registrada em segundo plano (dados), sem tela
         stored = pg.evaluate("""() => new Promise((res) => { const r = indexedDB.open('plantao-control'); r.onsuccess = () => { const g = r.result.transaction('shifts').objectStore('shifts').getAll(); g.onsuccess = () => res(g.result.map(s => s.activity.map(a => a.text))); }; })""")
@@ -344,7 +346,7 @@ def main():
         check('Plantão copiado: aviso e botão para continuar a revisão', pg.locator('#review-banner').count() == 1 and pg.get_attribute('#btn-continue', 'href').endswith('/s/portaria'))
         pg.screenshot(path=f'{SHOTS}/31-painel-revisar.png', full_page=True)
         # relatório antes de confirmar não leva dado velho
-        pg.goto(shift2 + '/relatorio'); pg.wait_for_selector('#report-text')
+        pg.goto(shift2 + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         r_unconf = plain(pg)
         check('Relatório antes de confirmar NÃO envia dados do plantão anterior (campos com "-")', 'Dr. Álvaro' not in r_unconf and 'Quantidade estimada disponível: -' in r_unconf and 'Bom dia' not in r_unconf and 'Não informado' not in r_unconf)
         check('Relatório avisa setores aguardando revisão', '13 setor(es) ainda aguardam revisão' in pg.inner_text('#review-warn'))
@@ -361,11 +363,11 @@ def main():
         for i in range(12):
             pg.wait_for_selector('#btn-confirm-sector', state='visible', timeout=5000)
             pg.click('#btn-confirm-sector'); pg.wait_for_timeout(250)
-        pg.wait_for_selector('#report-text', timeout=8000)
+        pg.wait_for_selector('#report-text', state='attached', timeout=8000)
         check('12 confirmações seguidas levam ao relatório (fluxo de poucos toques)', True)
         pg.goto(shift2); pg.wait_for_selector('#progress-label')
         check('Após confirmar: 13 de 13 preenchidos', '13 de 13' in pg.inner_text('#progress-label'), pg.inner_text('#progress-label'))
-        pg.goto(shift2 + '/relatorio'); pg.wait_for_selector('#report-text')
+        pg.goto(shift2 + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         r2 = plain(pg)
         check('Relatório do plantão copiado: dados confirmados e alteração aplicada', 'Dr. Álvaro' in r2 and re.search(r'Equipe completa\? Não', r2) and 'Bom dia' not in r2 and 'Não informado' not in r2, r2[:200])
         check('Relatório do plantão copiado: tipo MT/diurno', 'DIURNO' in r2.split('\n')[0])
@@ -466,7 +468,86 @@ def main():
         # interrupção: digitar e recarregar na hora
         pg.fill('[data-field="observacoes"] textarea', 'Interrompido no meio'); pg.reload(); pg.wait_for_selector('[data-field="observacoes"]')
         check('Interrupção: recarregar logo após digitar não perde o texto', pg.input_value('[data-field="observacoes"] textarea') == 'Interrompido no meio')
-        c3.close(); b.close()
+        c3.close()
+
+        # ============================ E) Revisão 3: relatório em modo WhatsApp, crédito e admin
+        c4 = b.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True, locale='pt-BR', accept_downloads=True)
+        pg = c4.new_page(); errs4 = []
+        pg.on('pageerror', lambda e: errs4.append(str(e))); pg.on('console', lambda m: errs4.append(m.text) if m.type == 'error' else None)
+        pg.goto(BASE + '/'); pg.wait_for_selector('#btn-start')
+        cr = pg.locator('#credit')
+        check('Crédito discreto na Home: "Desenvolvido por Enfermeiro Rubens Diniz"', 'Desenvolvido por Enfermeiro Rubens Diniz' in cr.inner_text() and pg.evaluate("parseFloat(getComputedStyle(document.querySelector('#credit')).fontSize)") <= 12.5)
+        check('Ícone de admin na Home (discreto, ≥ 44px)', pg.locator('#btn-admin').is_visible() and pg.locator('#btn-admin').bounding_box()['width'] >= 44)
+        # relatório: padrão = exibição WhatsApp
+        create_shift(pg, 'Rubens')
+        rep_url = pg.url.split('/s/')[0].split('#')[0] + '#/' + pg.url.split('#/')[1]
+        pg.goto(pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2]) + '/relatorio'); pg.wait_for_selector('#report-preview')
+        vis_prev = pg.locator('#report-preview').is_visible(); vis_ta = pg.locator('#report-text').is_visible()
+        ptxt = pg.inner_text('#report-preview')
+        check('Relatório abre por padrão na exibição do WhatsApp (sem asteriscos), texto cru escondido', vis_prev and not vis_ta and '*' not in ptxt and pg.eval_on_selector_all('#report-preview strong', 'e => e.length') > 10, ptxt[:80])
+        check('Aba "Como fica no WhatsApp" ativa e "Editar texto" disponível', pg.get_attribute('#tab-fmt', 'aria-selected') == 'true' and pg.locator('#tab-edit').is_visible())
+        pg.click('#tab-edit'); check('Editar texto mostra o texto cru editável', pg.locator('#report-text').is_visible() and '*PLANTÃO ADMINISTRATIVO' in rawtext(pg))
+
+        # ---- admin: senha
+        pg.goto(BASE + '/#/admin'); pg.wait_for_selector('#admin-pass')
+        check('Admin: pede senha (campo oculto) e não mostra o formulário', pg.get_attribute('#admin-pass', 'type') == 'password' and pg.locator('#adm-portaria').count() == 0)
+        pg.fill('#admin-pass', 'errada'); pg.click('#admin-enter'); pg.wait_for_timeout(200)
+        check('Admin: senha errada é recusada', pg.locator('#admin-error').is_visible() and pg.locator('#adm-portaria').count() == 0)
+        pg.fill('#admin-pass', 'hc2026'); pg.keyboard.press('Enter'); pg.wait_for_selector('#adm-portaria')
+        check('Admin: senha correta abre a lista dos 13 setores', pg.locator('.sectors a.sec').count() == 13)
+        pg.screenshot(path=f'{SHOTS}/40-admin.png')
+        # ---- admin: editar Portaria
+        pg.click('#adm-portaria'); pg.wait_for_selector('[data-adm="cobertura"]')
+        check('Admin setor: lista as perguntas do setor (com opção de remover) e Ocorrências relevantes', pg.locator('[data-adm]').count() == 6 and pg.locator('[data-adm="ocorrencias_relevantes"]').count() == 1)
+        pg.click('[data-adm="cobertura"] [data-act="remove"]'); pg.wait_for_selector('[data-adm="cobertura"] [data-act="restore"]')
+        pg.fill('[data-adm="equipe_completa"] input', 'Equipe 100% completa?'); pg.keyboard.press('Tab'); pg.wait_for_timeout(300)
+        pg.fill('#new-label', 'Quantidade de macas disponíveis'); pg.select_option('#new-type', 'num'); pg.check('#new-optional'); pg.click('#btn-add-q'); pg.wait_for_selector('.admrow.added')
+        check('Admin: remover, renomear e adicionar pergunta', pg.locator('[data-adm="cobertura"].removed').count() == 1 and pg.input_value('[data-adm="equipe_completa"] input') == 'Equipe 100% completa?' and pg.locator('.admrow.added').count() == 1)
+        pg.screenshot(path=f'{SHOTS}/41-admin-setor.png', full_page=True)
+        # ---- efeito no formulário e relatório
+        pg.goto(BASE + '/#/'); pg.wait_for_selector('#btn-resume'); pg.click('#btn-resume'); pg.wait_for_selector('#sec-portaria'); pg.click('#sec-portaria'); pg.wait_for_selector('[data-field]')
+        labels = pg.eval_on_selector_all('[data-field] .q', 'e => e.map(x => x.textContent)')
+        check('Formulário reflete a edição: renomeada, removida e nova (antes de Ocorrências relevantes)', 'Equipe 100% completa?' in labels and 'Cobertura realizada?' not in labels and labels[-2] == 'Quantidade de macas disponíveis' and labels[-1] == 'Ocorrências relevantes', str(labels))
+        check('Ocorrências relevantes é opcional (não bloqueia o setor)', pg.locator('[data-field="ocorrencias_relevantes"] .state').inner_text() == 'opcional')
+        newid = pg.eval_on_selector('[data-field^="c_"]', 'e => e.dataset.field')
+        pg.click('[data-field="equipe_completa"] [data-v="sim"]'); pg.click('[data-field="ausencia"] [data-v="nao"]'); pg.fill(f'[data-field="{newid}"] input', '5')
+        pg.fill('[data-field="ocorrencias_relevantes"] textarea', 'Elevador em manutenção'); pg.wait_for_timeout(500)
+        check('Setor com 4 obrigatórias preenchidas fica "Preenchido" e a ocorrência vira alerta', pg.inner_text('#sector-status') == 'Preenchido' and pg.locator('#sector-alerts').is_visible() and 'Ocorrências relevantes' in pg.inner_text('#sector-alerts'))
+        pg.goto(BASE + '/#/'); pg.click('#btn-resume'); pg.wait_for_selector('#sec-portaria')
+        pg.goto(pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2]) + '/relatorio'); pg.wait_for_selector('#report-preview')
+        rt = rawtext(pg)
+        check('Relatório usa o formulário editado', '• *Equipe 100% completa?* Sim' in rt and 'Cobertura realizada' not in rt and '• *Quantidade de macas disponíveis:* 5' in rt and '• *Ocorrências relevantes:* Elevador em manutenção' in rt, rt[:300])
+        # persistência após recarregar
+        pg.reload(); pg.wait_for_selector('#report-preview')
+        check('Edição do formulário persiste ao recarregar', 'Quantidade de macas disponíveis' in rawtext(pg))
+        # exportar / importar / restaurar
+        pg.goto(BASE + '/#/admin'); pg.wait_for_selector('#admin-pass'); pg.fill('#admin-pass', 'HC2026'); pg.click('#admin-enter'); pg.wait_for_selector('#cfg-export')
+        check('Admin: lista indica setor com alterações', 'alteração' in pg.inner_text('#adm-portaria'))
+        pg.evaluate("() => { window.__blobs = []; const oc = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return oc(b); }; const ac = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) { window.__dl = this.download; return; } return ac.call(this); }; }")
+        pg.click('#cfg-export'); pg.wait_for_timeout(400)
+        cfgp = os.path.join(dl_dir, 'form-config.json')
+        open(cfgp, 'wb').write(bytes(pg.evaluate("window.__blobs.at(-1).arrayBuffer().then(b => Array.from(new Uint8Array(b)))")))
+        cj = json.load(open(cfgp, encoding='utf-8'))
+        check('Exportar gera form-config.json válido com a alteração', pg.evaluate('window.__dl') == 'form-config.json' and cj['version'] == 1 and cj['sectors']['portaria']['removed'] == ['cobertura'] and len(cj['sectors']['portaria']['added']) == 1)
+        bad = os.path.join(dl_dir, 'badcfg.json'); json.dump({'foo': 1}, open(bad, 'w'))
+        pg.set_input_files('#cfg-file', bad); pg.wait_for_timeout(300)
+        check('Importar arquivo inválido é recusado', 'não é uma configuração' in pg.inner_text('#toast'))
+        pg.click('#cfg-reset'); pg.wait_for_selector('.dlg:has-text("Restaurar formulário padrão?")'); pg.click('.dlg:has-text("Restaurar formulário padrão?") .btn.danger'); pg.wait_for_timeout(300)
+        check('Restaurar padrão limpa as alterações', 'alteração' not in pg.inner_text('#adm-portaria') and 'padrão' in pg.inner_text('.topbar .sub'))
+        pg.set_input_files('#cfg-file', cfgp); pg.wait_for_selector('.dlg:has-text("Importar configuração?")'); pg.click('.dlg:has-text("Importar configuração?") .btn.primary'); pg.wait_for_timeout(300)
+        check('Importar o arquivo exportado reaplica a configuração', 'alteração' in pg.inner_text('#adm-portaria'))
+        pg.click('#admin-exit'); pg.wait_for_selector('#btn-start'); pg.goto(BASE + '/#/admin'); pg.wait_for_selector('#admin-pass')
+        check('Sair do admin tranca de novo (volta a pedir a senha)', pg.locator('#admin-pass').is_visible())
+        # 320px sem rolagem horizontal nas telas novas
+        pg.set_viewport_size({'width': 320, 'height': 800}); bad_r = []
+        for r in ['/#/', '/#/admin']:
+            pg.goto(BASE + r); pg.wait_for_timeout(300)
+            if pg.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") > 0: bad_r.append(r)
+        check('Layout 320px: telas novas sem rolagem horizontal', not bad_r, str(bad_r))
+        check('Sem erros de console na sessão E', not errs4, str(errs4[:3]))
+        c4.close()
+
+        b.close()
 
     shutil.rmtree(tmp, ignore_errors=True)
     failed = [r for r in RESULTS if not r[1]]

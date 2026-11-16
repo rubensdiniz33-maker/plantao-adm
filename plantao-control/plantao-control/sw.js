@@ -1,11 +1,11 @@
 // Service worker: guarda os arquivos do aplicativo para abrir sem conexão.
 // Dados do plantão ficam no IndexedDB e não passam pelo service worker.
-const VERSION = '2.1.0';
+const VERSION = '2.2.1';
 const CACHE = `plantao-control-${VERSION}`;
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest',
   'css/styles.css',
-  'js/app.js', 'js/sectors.js', 'js/validation.js', 'js/storage.js', 'js/report.js', 'js/export.js', 'js/ui.js', 'js/formconfig.js', 'form-config.json',
+  'js/app.js', 'js/sectors.js', 'js/validation.js', 'js/storage.js', 'js/report.js', 'js/export.js', 'js/ui.js', 'js/prefs.js', 'js/formconfig.js', 'form-config.json',
   'fonts/plus-jakarta-sans-latin.woff2',
   'icons/favicon.svg', 'icons/favicon.ico', 'icons/favicon-32.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png',
 ];

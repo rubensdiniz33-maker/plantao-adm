@@ -35,7 +35,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { -webkit-text-size-adjust: 100%; background: var(--bg); }
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; background: var(--bg); }
 body {
   margin: 0;
   background: var(--bg);
@@ -379,3 +379,31 @@ details.more > .stack { padding: 12px 14px; }
 .admrow.added { border-left: 4px solid var(--green); }
 .checkrow { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; color: var(--text); }
 .checkrow input { width: 22px; height: 22px; accent-color: var(--red); flex: none; }
+
+/* ===== Revisão 4: sem zoom por toque duplo, lista de nomes, setores arrastáveis ===== */
+html, body, button, a, input, textarea, select, label, summary, [role='button'] { touch-action: manipulation; }
+.stepbtn, .nabtn, .seg button, .tab, .drag, .btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.multi { display: flex; flex-direction: column; gap: 8px; }
+.stepbtn.rm { color: var(--muted); }
+.addmore { align-self: flex-start; }
+.srows-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.srows-head .note { flex: 1; }
+.srowwrap { display: flex; align-items: stretch; gap: 6px; height: 60px; position: relative; touch-action: manipulation; }
+.srowwrap .srow { flex: 1; min-width: 0; height: 100%; }
+.srowwrap .srow .nm { min-width: 0; flex: 1; }
+.srowwrap .srow .nm .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drag { flex: none; width: 48px; display: grid; place-items: center; border-radius: var(--r-s); border: 1.5px solid var(--line); background: #fff; color: var(--muted); cursor: grab; touch-action: none; }
+.drag .ic { width: 22px; height: 22px; }
+.drag:focus-visible { outline: 3px solid rgba(200, 16, 46, 0.35); }
+.srowwrap.dragging { z-index: 5; transition: none; filter: drop-shadow(0 8px 14px rgba(20, 24, 31, 0.25)); opacity: 0.97; }
+.srowwrap.dragging .drag { background: var(--red-soft); color: var(--red); border-color: var(--red); cursor: grabbing; }
+.tab.fmtbtn { margin-left: auto; }
+.tab.fmtbtn + .editedtag { margin-left: 0; }
+.chip[aria-pressed='true'] { border-color: var(--red); background: var(--red-soft); color: var(--red); }
+.tabs { flex-wrap: wrap; }
+.tabs .tab { padding: 0 12px; }
+.tag.compact { padding: 0; width: 30px; height: 30px; min-width: 30px; justify-content: center; flex: none; }
+.srowwrap .srow { padding: 6px 10px; gap: 10px; }
+.drag { width: 44px; }
+.tab.fmtbtn { padding: 0; width: 48px; justify-content: center; }
+@media (max-width: 359px) { #btn-report-sector .ell { display: none; } #btn-report-sector { min-width: 52px; padding: 0; } }

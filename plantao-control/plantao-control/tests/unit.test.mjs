@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SECTORS, NA, applyFormConfig, sanitizeFormConfig, sectorProgress, sectorAlerts, visibleFields, isMeaningfulText, shiftSummary, sectorStatus, nextAttention, effectiveAnswers } from '../js/sectors.js';
-import { finalReportText, openingMessage, reportText, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
+import { finalReportText, openingMessage, reportText, DEFAULT_FORMAT, normalizeFormat, reportModel, missingList, greeting, joinNames, whatsappToHtml } from '../js/report.js';
 import { normalizeShift, parseBackup, buildBackup, validateIdentification, isValidDate, sanitizeAnswers } from '../js/validation.js';
 
 const baseShift = (over = {}) => ({
@@ -56,16 +56,18 @@ test('campos condicionais aparecem/ocultam conforme a resposta', () => {
   assert.ok(!visibleFields(sus, {}).some((f) => f.id === 'motivo'), 'vazio não é tratado como bloqueado');
 });
 
-test('zero é resposta válida; vazio nunca vira zero/Não', () => {
+test('número não digitado vale 0 (e não trava o setor); texto vazio continua "-"', () => {
   const sus = SECTORS.find((s) => s.id === 'enf_sus');
   const p = sectorProgress(sus, { leitos: '0' });
   assert.equal(p.status, 'progress');
   assert.ok(!p.missing.some((f) => f.id === 'leitos'));
-  assert.ok(p.missing.some((f) => f.id === 'dialise'));
+  assert.ok(!p.missing.some((f) => f.id === 'dialise'), 'número vazio conta como 0');
+  assert.ok(p.missing.some((f) => f.id === 'medico'), 'texto vazio continua pendente');
   const sh = baseShift({ answers: { enf_sus: { leitos: '0' } } });
   const sec = reportModel(sh).find((s) => s.id === 'enf_sus');
   assert.equal(sec.rows.find((r) => r.label === 'Leitos disponíveis').text, '0');
-  assert.equal(sec.rows.find((r) => r.label === 'Pacientes em diálise').text, '-');
+  assert.equal(sec.rows.find((r) => r.label === 'Pacientes em diálise').text, '0');
+  assert.equal(sec.rows.find((r) => r.label === 'Médico de plantão (FDS)').text, '-');
 });
 
 test('preenchimento x ocorrência são independentes (setor preenchido com ocorrência)', () => {
@@ -77,14 +79,14 @@ test('preenchimento x ocorrência são independentes (setor preenchido com ocorr
   assert.deepEqual(sectorAlerts(por, {}), []);
 });
 
-test('N/A conta como respondido e é diferente de Não informado', () => {
+test('N/A conta como respondido e aparece como "-"; número vazio aparece como 0', () => {
   const rou = SECTORS.find((s) => s.id === 'rouparia');
   const p = sectorProgress(rou, { enxoval_suficiente: NA, quantidade: NA, reposicao_urgente: 'nao' });
   assert.equal(p.status, 'done');
   const sh = baseShift({ answers: { rouparia: { enxoval_suficiente: NA } } });
   const rows = reportModel(sh).find((s) => s.id === 'rouparia').rows;
-  assert.equal(rows[0].text, 'Não se aplica');
-  assert.equal(rows[1].text, '-');
+  assert.deepEqual([rows[0].text, rows[0].kind], ['-', 'na']);
+  assert.equal(rows[1].text, '0');
 });
 
 test('texto neutro ("nenhuma", "0") não gera ocorrência', () => {
@@ -116,7 +118,7 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
   });
   // vazio: cada pergunta visível aparece como Não informado
   assert.ok(text.includes('• *Equipe completa?* -'));
-  assert.ok(text.includes('• *Leitos bloqueados/interditados:* -'));
+  assert.ok(text.includes('• *Leitos bloqueados/interditados:* 0'));
   assert.ok(!/\n\n\n/.test(text), 'no máximo uma linha em branco');
   // nada de dados fixos do exemplo vazando; relatório NÃO leva enfermeiro nem horário (ficam na apresentação)
   const other = reportText(baseShift({ nurses: ['Zélia'], date: '2027-01-02' }));
@@ -338,4 +340,53 @@ test('reportEdit sobrevive a normalização e backup; edição vazia é descarta
   const back = parseBackup(buildBackup([normalizeShift(sh)]));
   assert.equal(back.shifts[0].reportEdit.text, 'texto manual');
   assert.equal(normalizeShift({ ...sh, reportEdit: { text: '   ', base: '' } }).reportEdit, null);
+});
+
+test('N/A em número também sai como "-" (não 0)', () => {
+  const sh = baseShift({ answers: { enf_sus: { leitos: NA } } });
+  const t = reportText(sh);
+  assert.ok(t.includes('• *Leitos disponíveis:* -') && t.includes('• *Pacientes em diálise:* 0'));
+});
+
+test('PA: vários médicos (lista de nomes) — uma por linha no dado, vírgulas no relatório', () => {
+  const pa = SECTORS.find((x) => x.id === 'pa');
+  assert.equal(pa.fields.find((f) => f.id === 'medico').type, 'multi');
+  const a = sanitizeAnswers({ pa: { medico: ' Dr. A \n\n Dra. B \n' + 'x'.repeat(300) } });
+  assert.equal(a.pa.medico.split('\n').length, 3); assert.equal(a.pa.medico.split('\n')[0], 'Dr. A'); assert.equal(a.pa.medico.split('\n')[2].length, 120);
+  const t = reportText(baseShift({ answers: { pa: { medico: 'Dr. A\nDra. B' } } }));
+  assert.ok(t.includes('• *Médico de plantão:* Dr. A, Dra. B'));
+  assert.equal(sanitizeAnswers({ pa: { medico: ' \n ' } }).pa?.medico, undefined);
+});
+
+test('formatação personalizada: padrão = modelo atual; opções mudam só a aparência', () => {
+  const sh = baseShift({ answers: { portaria: { equipe_completa: 'sim' } } });
+  assert.equal(reportText(sh), reportText(sh, DEFAULT_FORMAT));
+  const t = reportText(sh, { bullet: '-', boldQuestions: false, boldTitles: false, upperTitles: false, numberTitles: false, blankBetween: false, showDate: false });
+  const lines = t.split('\n');
+  assert.equal(lines[0], 'PLANTÃO ADMINISTRATIVO — NOTURNO');
+  assert.equal(lines[1], 'Portaria/Acolhimento');
+  assert.equal(lines[2], '- Equipe completa? Sim');
+  assert.ok(!t.includes('*') && !t.includes('\n\n') && !t.includes('Data:'));
+  assert.ok(reportText(sh, { bullet: '' }).includes('\nEquipe completa? Sim') === false); // negrito ainda ligado
+  assert.ok(reportText(sh, { bullet: '' }).includes('\n*Equipe completa?* Sim'));
+  // ordem dos setores NUNCA muda com a formatação
+  const idx = SECTORS.map((x) => t.indexOf(x.title));
+  assert.deepEqual(idx, [...idx].sort((a, b) => a - b));
+  assert.deepEqual(normalizeFormat({ bullet: '??', boldQuestions: 'x', upperTitles: false }), { ...DEFAULT_FORMAT, upperTitles: false });
+});
+
+test('ordem de navegação do usuário: validada, completa e sem efeito no relatório', async () => {
+  const prefs = await import('../js/prefs.js');
+  const ids = SECTORS.map((x) => x.id);
+  prefs.setOrder(['pa', 'uti1', 'xxx', 'pa', ...ids.filter((i) => i !== 'pa' && i !== 'uti1')].slice(0, 6));
+  const got = prefs.getOrder();
+  assert.deepEqual(got.slice(0, 2), ['pa', 'uti1']); assert.equal(new Set(got).size, 13); assert.ok(prefs.isCustomOrder());
+  const sh = baseShift({});
+  const before = reportText(sh);
+  assert.deepEqual(prefs.orderedSectors().map((x) => x.id), got);
+  assert.equal(reportText(sh), before);
+  // Próximo/Continuar seguem a ordem do usuário
+  const nx = nextAttention(sh, -1, prefs.orderedSectors());
+  assert.equal(nx.id, 'pa');
+  prefs.resetOrder(); assert.deepEqual(prefs.getOrder(), ids); assert.ok(!prefs.isCustomOrder());
 });

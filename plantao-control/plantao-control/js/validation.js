@@ -40,6 +40,10 @@ function cleanAnswerValue(field, v) {
   if (field.type === 'num') {
     return new RegExp(`^\\d{1,${MAX_NUM_DIGITS}}$`).test(v) ? v : undefined;
   }
+  if (field.type === 'multi') {
+    const names = v.split('\n').map((x) => x.trim().slice(0, 120)).filter(Boolean).slice(0, 12);
+    return names.length ? names.join('\n') : undefined;
+  }
   const t = v.trim().slice(0, MAX_TEXT);
   return t === '' ? undefined : t;
 }

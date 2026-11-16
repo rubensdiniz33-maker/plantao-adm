@@ -1,5 +1,5 @@
 // Geração das mensagens (apresentação e relatório) a partir dos dados do plantão.
-import { SECTORS, visibleFields, isAnswered, sectorProgress, sectorAlerts, sectorStatus, effectiveAnswers, NA } from './sectors.js';
+import { SECTORS, visibleFields, isAnswered, splitNames, sectorProgress, sectorAlerts, sectorStatus, effectiveAnswers, NA } from './sectors.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -44,10 +44,12 @@ export function openingMessage(s) {
 const YN_TEXT = { sim: 'Sim', nao: 'Não' };
 
 // Valor de exibição de um campo: { text, kind } — kind: 'sim'|'nao'|'na'|'ni'|'val'
+// Regras: número não digitado = 0; "Não se aplica" = "-"; demais campos vazios = "-".
 export function displayValue(field, v) {
-  if (!isAnswered(v)) return { text: '-', kind: 'ni' };
-  if (v === NA) return { text: 'Não se aplica', kind: 'na' };
+  if (v === NA) return { text: '-', kind: 'na' };
+  if (!isAnswered(v)) return field.type === 'num' ? { text: '0', kind: 'val' } : { text: '-', kind: 'ni' };
   if (field.type === 'yn') return { text: YN_TEXT[v], kind: v };
+  if (field.type === 'multi') return { text: splitNames(v).join(', ') || '-', kind: 'val' };
   return { text: String(v).trim(), kind: 'val' };
 }
 
@@ -79,22 +81,38 @@ export function reportHeader(shift) {
   };
 }
 
-// Texto para WhatsApp: linha em branco só ENTRE os setores (dentro do setor, sem). Perguntas e títulos em *negrito*; campo vazio = "-".
-export function reportText(shift) {
+// ---------- Formatação personalizável (preferência do usuário; padrão = modelo WhatsApp atual) ----------
+export const BULLETS = [['•', '•'], ['-', '-'], ['▪', '▪'], ['➤', '➤'], ['', 'Nenhum']];
+export const DEFAULT_FORMAT = Object.freeze({
+  bullet: '•', boldQuestions: true, boldTitles: true, upperTitles: true, numberTitles: true, blankBetween: true, showDate: true,
+});
+export function normalizeFormat(raw) {
+  const f = { ...DEFAULT_FORMAT };
+  if (!raw || typeof raw !== 'object') return f;
+  if (typeof raw.bullet === 'string' && BULLETS.some(([v]) => v === raw.bullet)) f.bullet = raw.bullet;
+  for (const k of ['boldQuestions', 'boldTitles', 'upperTitles', 'numberTitles', 'blankBetween', 'showDate']) if (typeof raw[k] === 'boolean') f[k] = raw[k];
+  return f;
+}
+export const isDefaultFormat = (f) => Object.keys(DEFAULT_FORMAT).every((k) => f[k] === DEFAULT_FORMAT[k]);
+
+// Texto para WhatsApp. Padrão: linha em branco só ENTRE os setores; perguntas e títulos em *negrito*.
+// Valores: número vazio = 0; N/A e demais vazios = "-". A ORDEM dos setores é sempre a original (não depende da preferência de navegação).
+export function reportText(shift, fmtRaw = DEFAULT_FORMAT) {
+  const fmt = normalizeFormat(fmtRaw);
+  const bold = (t, on) => (on ? `*${t}*` : t);
   const h = reportHeader(shift);
-  const lines = [
-    `*${h.title}*`,
-    `*Data:* ${h.date}`,
-  ];
-  // Horário e enfermeiro ficam só na mensagem de apresentação. Cada setor é separado por uma linha em branco.
+  const lines = [bold(h.title, fmt.boldTitles)];
+  if (fmt.showDate) lines.push(`${bold('Data:', fmt.boldTitles)} ${h.date}`);
+  const child = fmt.bullet ? '◦ ' : '';
+  const top = fmt.bullet ? `${fmt.bullet} ` : '';
   for (const sec of reportModel(shift)) {
-    lines.push('');
-    lines.push(`*${sec.index}. ${sec.title.toUpperCase()}*`);
+    if (fmt.blankBetween) lines.push('');
+    const title = `${fmt.numberTitles ? `${sec.index}. ` : ''}${fmt.upperTitles ? sec.title.toUpperCase() : sec.title}`;
+    lines.push(bold(title, fmt.boldTitles));
     for (const r of sec.rows) {
-      const pre = r.indent ? '   ◦ ' : '• ';
-      const lab = `*${r.label}${r.label.endsWith('?') ? '' : ':'}*`;
-      if (r.kind === 'ni') lines.push(`${pre}${lab} -`);
-      else if (r.kind === 'val' && r.text.includes('\n')) {
+      const pre = r.indent ? `   ${child}` : top;
+      const lab = bold(`${r.label}${r.label.endsWith('?') ? '' : ':'}`, fmt.boldQuestions);
+      if (r.kind === 'val' && r.text.includes('\n')) {
         lines.push(`${pre}${lab}`);
         for (const l of r.text.split('\n')) if (l.trim()) lines.push(`      ${l.trim()}`);
       } else lines.push(`${pre}${lab} ${r.text}`);
@@ -112,7 +130,7 @@ export function missingList(shift) {
     const answers = shift.answers?.[sector.id] || {};
     const p = sectorProgress(sector, answers);
     const labels = p.status === 'none'
-      ? visibleFields(sector, answers).filter((f) => !f.optional).map((f) => f.label)
+      ? visibleFields(sector, answers).filter((f) => !f.optional && f.type !== 'num').map((f) => f.label)
       : p.missing.map((f) => f.label);
     if (labels.length) out.push({ id: sector.id, title: sector.title, status: p.status, labels });
   }
@@ -135,8 +153,8 @@ export function whatsappToHtml(textValue) {
 
 // Texto final do relatório: a versão editada à mão (se houver) ou o texto gerado.
 // reportEdit = { text, base } — base é o texto gerado no momento da edição; se os dados mudarem depois, a edição fica "desatualizada".
-export function finalReportText(shift) {
-  const auto = reportText(shift);
+export function finalReportText(shift, fmt = DEFAULT_FORMAT) {
+  const auto = reportText(shift, fmt);
   const e = shift.reportEdit;
   if (e && typeof e.text === 'string' && e.text.trim()) return { text: e.text, auto, edited: true, stale: e.base !== auto };
   return { text: auto, auto, edited: false, stale: false };

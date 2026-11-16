@@ -1,15 +1,16 @@
 // PLANTÃO ADM — interface, rotas e fluxo do plantão.
 import * as storage from './storage.js';
 import * as formcfg from './formconfig.js';
+import * as prefs from './prefs.js';
 import {
-  SECTORS, SECTOR_BY_ID, defaultFields, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, sectorProgress, sectorAlerts,
+  SECTORS, SECTOR_BY_ID, defaultFields, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, splitNames, sectorProgress, sectorAlerts,
   sectorStatus, effectiveAnswers, nextAttention, shiftSummary,
 } from './sectors.js';
 import {
   MAX_ACTIVITY, validateIdentification, cleanName, normalizeShift, parseBackup, buildBackup,
 } from './validation.js';
 import {
-  openingMessage, reportText, finalReportText, missingList, alertsList, whatsappToHtml, formatDateBR, hoursText, shiftName, joinNames,
+  openingMessage, reportText, finalReportText, BULLETS, DEFAULT_FORMAT, isDefaultFormat, missingList, alertsList, whatsappToHtml, formatDateBR, hoursText, shiftName, joinNames,
 } from './report.js';
 import { copyText, shareWhatsApp, buildPngs, buildPdf, downloadBlob, shareFiles } from './export.js';
 import {
@@ -489,7 +490,8 @@ const ST_TEXT = { none: 'Não iniciado', progress: 'Em preenchimento', review: '
 function screenPanel(shift) {
   const sm = shiftSummary(shift);
   const fill = h('i');
-  const list = h('div', { class: 'sectors' }, SECTORS.map((sector) => {
+  const order = prefs.orderedSectors();
+  const list = h('div', { class: 'sectors' }, order.map((sector) => {
     const status = sectorStatus(shift, sector);
     const ans = effectiveAnswers(shift, sector.id);
     const prog = sectorProgress(sector, ans);
@@ -513,7 +515,7 @@ function screenPanel(shift) {
     icon('chevron', 'chev'));
   }));
 
-  const nxt = nextAttention(shift, -1);
+  const nxt = nextAttention(shift, -1, order);
   const screen = h('main', { class: 'screen' },
     topbar({
       title: 'Painel', sub: `${shift.type === 'N' ? 'Noturno' : 'Manhã/Tarde'} · ${formatDateBR(shift.date)}`, back: '#/',
@@ -568,6 +570,30 @@ function buildField(f, answers, onChange) {
       h('button', { type: 'button', 'data-v': v, 'aria-label': aria, 'aria-pressed': 'false', onclick: () => setVal(answers[f.id] === v ? undefined : v) }, label));
     control = h('div', { class: 'seg', role: 'group', 'aria-labelledby': qid }, btns);
     refresh = () => btns.forEach((b) => b.setAttribute('aria-pressed', String(answers[f.id] === b.dataset.v)));
+  } else if (f.type === 'multi') {
+    // lista de nomes (ex.: mais de um médico): guarda um por linha
+    const box = h('div', { class: 'multi' });
+    const rows = [];
+    const joined = () => rows.map((r) => r.input.value.trim()).filter(Boolean).join('\n');
+    const commit = () => setVal(joined() || undefined);
+    const syncRm = () => rows.forEach((r) => { r.rm.hidden = rows.length < 2; r.input.setAttribute('aria-label', `${f.label} ${rows.indexOf(r) + 1}`); });
+    const addRow = (val = '', focus = false) => {
+      const input = h('input', { class: 'input', type: 'text', maxlength: '120', autocomplete: 'off', placeholder: f.placeholder || '', value: val, enterkeyhint: 'done' });
+      const rm = h('button', { type: 'button', class: 'stepbtn rm', 'aria-label': 'Remover este nome', onclick: () => {
+        const i = rows.findIndex((r) => r.input === input);
+        rows[i].line.remove(); rows.splice(i, 1); syncRm(); commit();
+      } }, icon('x'));
+      const line = h('div', { class: 'valuerow' }, input, rm);
+      const r = { input, rm, line };
+      input.addEventListener('input', commit);
+      rows.push(r); box.append(line); syncRm();
+      if (focus) input.focus();
+    };
+    const existing = splitNames(answers[f.id]);
+    (existing.length ? existing : ['']).forEach((n) => addRow(n));
+    control = h('div', { class: 'stack', style: 'gap:8px' }, box,
+      h('button', { type: 'button', class: 'btn secondary small addmore', id: `add-${f.id}`, onclick: () => addRow('', true) }, icon('plus'), f.addLabel || 'Adicionar'));
+    refresh = () => {};
   } else {
     const multiline = f.type === 'area';
     const isNum = f.type === 'num';
@@ -624,35 +650,109 @@ function buildField(f, answers, onChange) {
   return { el: wrap, update };
 }
 
-function openSectorSheet(shift, currentId) {
+function openSectorSheet(shift, currentId, onOrder) {
   let sh;
   const sm = shiftSummary(shift);
   const fill = h('i');
-  const rows = SECTORS.map((sec, i) => {
+  const rowsBox = h('div', { class: 'srows', id: 'srows' });
+  const resetBtn = h('button', { class: 'linkbtn', type: 'button', id: 'btn-reset-order', hidden: !prefs.isCustomOrder() }, icon('refresh'), 'Ordem padrão');
+  const renumber = () => [...rowsBox.children].forEach((w, i) => { w.querySelector('.t').textContent = `${i + 1}. ${w.dataset.title}`; });
+  const commit = () => {
+    prefs.setOrder([...rowsBox.children].map((w) => w.dataset.wrap));
+    renumber(); resetBtn.hidden = !prefs.isCustomOrder();
+    if (onOrder) onOrder();
+  };
+
+  const mkRow = (sec) => {
     const status = sectorStatus(shift, sec);
     const alerts = sectorAlerts(sec, effectiveAnswers(shift, sec.id)).length > 0;
-    return h('button', {
+    const btn = h('button', {
       class: 'srow', type: 'button', 'data-sector': sec.id, id: `srow-${sec.id}`, 'aria-current': sec.id === currentId ? 'true' : 'false',
       onclick: () => { sh.close(); if (sec.id !== currentId) go(`#/p/${shift.id}/s/${sec.id}`); },
     },
     h('i', { class: `dot ${status === 'done' ? 'done' : (status === 'progress' || status === 'review') ? 'progress' : ''}` }),
-    h('span', { class: 'nm' }, `${i + 1}. ${sec.title}`, h('small', { class: 'stx' }, ST_TEXT[status])),
-    alerts ? h('span', { class: 'tag amber' }, icon('alert'), 'Ocorrência') : null);
-  });
+    h('span', { class: 'nm' }, h('span', { class: 't' }, sec.title), h('small', { class: 'stx' }, ST_TEXT[status])),
+    alerts ? h('span', { class: 'tag amber compact', title: 'Ocorrência', 'aria-label': 'Com ocorrência' }, icon('alert')) : null);
+    const handle = h('span', { class: 'drag', role: 'button', tabindex: '0', 'data-drag': sec.id, 'aria-label': `Reordenar ${sec.title}: arraste ou use as setas para cima e para baixo` }, icon('drag'));
+    const wrap = h('div', { class: 'srowwrap', 'data-wrap': sec.id, 'data-title': sec.title }, btn, handle);
+
+    // arrastar (toque/mouse) — a ordem é só da navegação; o relatório final não muda
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      try { handle.setPointerCapture(e.pointerId); } catch { /* ok */ }
+      const box = rowsBox.closest('.sheetbody');
+      const rowH = wrap.offsetHeight + 6;
+      const grab = e.clientY - wrap.getBoundingClientRect().top;
+      let curY = e.clientY, raf = 0, moved = false;
+      wrap.classList.add('dragging');
+      const place = () => {
+        wrap.style.transform = '';
+        const top = rowsBox.getBoundingClientRect().top;
+        const n = rowsBox.children.length;
+        const k = Math.max(0, Math.min(n - 1, Math.floor((curY - grab + wrap.offsetHeight / 2 - top) / rowH)));
+        const cur = [...rowsBox.children].indexOf(wrap);
+        if (k !== cur) { const ref = [...rowsBox.children].filter((x) => x !== wrap)[k]; if (ref) rowsBox.insertBefore(wrap, ref); else rowsBox.append(wrap); moved = true; }
+        const nat = rowsBox.getBoundingClientRect().top + [...rowsBox.children].indexOf(wrap) * rowH;
+        wrap.style.transform = `translateY(${curY - grab - nat}px)`;
+      };
+      const tick = () => {
+        const br = box.getBoundingClientRect();
+        if (curY < br.top + 56) box.scrollTop -= 10; else if (curY > br.bottom - 56) box.scrollTop += 10;
+        place(); raf = requestAnimationFrame(tick);
+      };
+      const move = (ev) => { curY = ev.clientY; };
+      const end = () => {
+        cancelAnimationFrame(raf);
+        handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', end); handle.removeEventListener('pointercancel', end);
+        place(); wrap.style.transform = ''; wrap.classList.remove('dragging');
+        if (moved) commit();
+      };
+      handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', end); handle.addEventListener('pointercancel', end);
+      tick();
+    });
+    handle.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const ref = e.key === 'ArrowUp' ? wrap.previousElementSibling : wrap.nextElementSibling;
+      if (!ref) return;
+      if (e.key === 'ArrowUp') rowsBox.insertBefore(wrap, ref); else rowsBox.insertBefore(ref, wrap);
+      handle.focus(); wrap.scrollIntoView({ block: 'nearest' }); commit();
+    });
+    return wrap;
+  };
+  prefs.orderedSectors().forEach((sec) => rowsBox.append(mkRow(sec)));
+  renumber();
+  resetBtn.onclick = () => {
+    const by = Object.fromEntries([...rowsBox.children].map((w) => [w.dataset.wrap, w]));
+    SECTORS.forEach((sec) => rowsBox.append(by[sec.id]));
+    prefs.resetOrder(); renumber(); resetBtn.hidden = true;
+    if (onOrder) onOrder();
+  };
+
+  const list = () => prefs.orderedSectors();
+  const curIdx = () => list().findIndex((x) => x.id === currentId);
+  const nxt = nextAttention(shift, curIdx(), list());
   const body = h('div', { class: 'stack' },
     h('div', { class: 'stack sheetsum', style: 'gap:6px' },
       h('b', { id: 'sheet-count' }, `${sm.done} de ${sm.total} preenchidos${sm.review ? ` · ${sm.review} p/ revisar` : ''}`),
-      h('div', { class: 'pbar' }, fill)),
-    h('div', { class: 'srows' }, rows));
+      h('div', { class: 'pbar' }, fill),
+      nxt ? h('button', { class: 'btn secondary small block', type: 'button', id: 'btn-sheet-next', onclick: () => {
+        const n = nextAttention(shift, curIdx(), list());
+        sh.close(); if (n && n.id !== currentId) go(`#/p/${shift.id}/s/${n.id}`);
+      } }, icon('play'), h('span', { class: 'ell' }, `Ir para o próximo pendente: ${nxt.title}`)) : null),
+    h('div', { class: 'srows-head' }, h('span', { class: 'note' }, 'Segure e arraste ⠿ para reorganizar. Fica salvo neste aparelho; o relatório mantém a ordem padrão.'), resetBtn),
+    rowsBox);
   sh = sheet({ title: 'Ir para o setor', body });
   requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${(sm.done / sm.total) * 100}%`; }));
   const cur = body.querySelector('[aria-current="true"]');
   const box = body.closest('.sheetbody');
-  if (cur && box) box.scrollTop = cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2;
+  if (cur && box) box.scrollTop = cur.closest('.srowwrap').offsetTop - box.clientHeight / 2 + 30;
 }
 
 function screenSector(shift, sector) {
-  const idx = SECTORS.findIndex((s) => s.id === sector.id);
+  const orderNow = () => prefs.orderedSectors();
+  const posNow = () => orderNow().findIndex((s) => s.id === sector.id);
   const answers = shift.answers[sector.id] || (shift.answers[sector.id] = {});
   const stLabel = h('span', { class: 'sub', id: 'sector-status' });
   const items = [];
@@ -665,9 +765,9 @@ function screenSector(shift, sector) {
 
   // posição no fluxo (ex.: 9/13) e filete fino de progresso por posição
   const fill = h('i');
-  const selCount = h('span', { id: 'sel-count' }, `${idx + 1}/${SECTORS.length}`);
-  const bar = h('div', { class: 'pbar thin', role: 'progressbar', 'aria-valuemin': '1', 'aria-valuemax': String(SECTORS.length), 'aria-valuenow': String(idx + 1) }, fill);
-  const updateStrip = () => { requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${((idx + 1) / SECTORS.length) * 100}%`; })); };
+  const selCount = h('span', { id: 'sel-count' });
+  const bar = h('div', { class: 'pbar thin', role: 'progressbar', 'aria-valuemin': '1', 'aria-valuemax': String(SECTORS.length) }, fill);
+  const updateStrip = () => { const p = posNow(); selCount.textContent = `${p + 1}/${SECTORS.length}`; bar.setAttribute('aria-valuenow', String(p + 1)); requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = `${((p + 1) / SECTORS.length) * 100}%`; })); };
 
   const confirmBtn = h('button', { class: 'btn green', type: 'button', id: 'btn-confirm-sector', hidden: !carried(), onclick: () => {
     const meta = shift.sectorMeta[sector.id];
@@ -681,13 +781,21 @@ function screenSector(shift, sector) {
     refreshAll();
     goNext();
   } }, icon('check'), 'Confirmar e seguir');
-  const isLast = idx === SECTORS.length - 1;
-  const nextBtn = h('button', { class: 'btn primary', type: 'button', id: 'btn-next-sector', hidden: carried(), onclick: () => goNext() }, isLast ? 'Ver relatório' : 'Próximo', icon('right'));
-  // Sequencial: avança para o setor seguinte; depois do último, abre o relatório (sem voltar ao início).
+  const nextLabel = h('span', null, 'Próximo');
+  const nextBtn = h('button', { class: 'btn primary', type: 'button', id: 'btn-next-sector', hidden: carried(), onclick: () => goNext() }, nextLabel, icon('right'));
+  // Sequencial na ordem do usuário; depois do último, abre o relatório (sem voltar ao início).
   function goNext() {
-    const n = SECTORS[idx + 1];
+    const n = orderNow()[posNow() + 1];
     go(n ? `#/p/${shift.id}/s/${n.id}` : `#/p/${shift.id}/relatorio`);
   }
+  const prevBtn = h('button', { class: 'btn secondary sq', type: 'button', id: 'btn-prev-sector', onclick: () => { const p = orderNow()[posNow() - 1]; if (p) go(`#/p/${shift.id}/s/${p.id}`); } }, icon('left'));
+  const refreshNav = () => {
+    const p = posNow(), l = orderNow();
+    nextLabel.textContent = p === l.length - 1 ? 'Ver relatório' : 'Próximo';
+    prevBtn.disabled = p === 0;
+    prevBtn.setAttribute('aria-label', p > 0 ? `Setor anterior: ${l[p - 1].title}` : 'Primeiro setor');
+    updateStrip();
+  };
 
   const refreshAll = () => {
     for (const it of items) it.el.hidden = !conditionMet(it.f.showIf, answers);
@@ -700,7 +808,7 @@ function screenSector(shift, sector) {
     reviewNote.hidden = !c;
     confirmBtn.hidden = !c;
     nextBtn.hidden = c;
-    updateStrip();
+    refreshNav();
   };
 
   const onChange = () => {
@@ -723,14 +831,13 @@ function screenSector(shift, sector) {
   }
   refreshAll();
 
-  const prev = SECTORS[idx - 1];
   const screen = h('main', { class: 'screen' },
     h('div', { class: 'stickyhead' },
       h('header', { class: 'topbar' },
         h('a', { class: 'iconbtn', href: `#/p/${shift.id}`, 'aria-label': 'Voltar ao painel', id: 'btn-back-panel' }, icon('back')),
         h('h1', null, sector.title, stLabel),
         saveBadge(true),
-        h('button', { class: 'selbtn', type: 'button', id: 'btn-sectors', 'aria-label': 'Escolher outro setor', onclick: () => openSectorSheet(shift, sector.id) }, icon('grid'), selCount)),
+        h('button', { class: 'selbtn', type: 'button', id: 'btn-sectors', 'aria-label': 'Escolher outro setor', onclick: () => openSectorSheet(shift, sector.id, refreshNav) }, icon('grid'), selCount)),
       bar),
     h('div', { class: 'content tight' },
       storageBanner(),
@@ -739,9 +846,8 @@ function screenSector(shift, sector) {
       alertBox,
       h('p', { class: 'note' }, 'Não registre nomes de pacientes nem outros dados pessoais identificáveis.')),
     h('div', { class: 'actionbar' },
-      prev
-        ? h('a', { class: 'btn secondary sq', href: `#/p/${shift.id}/s/${prev.id}`, id: 'btn-prev-sector', 'aria-label': `Setor anterior: ${prev.title}` }, icon('left'))
-        : h('span', { class: 'btn secondary sq', 'aria-hidden': 'true', style: 'opacity:.35' }, icon('left')),
+      prevBtn,
+      h('a', { class: 'btn secondary fit', href: `#/p/${shift.id}/relatorio`, id: 'btn-report-sector', 'aria-label': 'Ver relatório' }, icon('file'), h('span', { class: 'ell' }, 'Relatório')),
       confirmBtn, nextBtn));
   mount(screen);
   items.forEach((it) => it.update());
@@ -751,8 +857,9 @@ function screenSector(shift, sector) {
 // Relatório
 // =====================================================================
 function screenReport(shift) {
-  const fr = finalReportText(shift);
-  const auto = fr.auto;
+  let fmt = prefs.getFormat();
+  const fr = finalReportText(shift, fmt);
+  let auto = fr.auto;
   const miss = missingList(shift);
   const alerts = alertsList(shift);
   const reviewCount = miss.filter((m) => m.status === 'review').length;
@@ -770,7 +877,7 @@ function screenReport(shift) {
   const grow = () => { editor.style.height = 'auto'; editor.style.height = `${Math.max(240, editor.scrollHeight + 4)}px`; };
   const editBadge = h('span', { class: 'editedtag', id: 'edited-tag', hidden: true }, 'Editado');
   const staleBox = h('div', { class: 'banner warn', id: 'stale-box', hidden: true }, icon('alert'),
-    h('div', { class: 'grow1' }, 'Os dados dos setores mudaram depois da sua edição. O texto abaixo é a sua versão editada.',
+    h('div', { class: 'grow1' }, 'Os dados ou a formatação mudaram depois da sua edição. O texto abaixo continua sendo a sua versão editada.',
       h('div', { class: 'row', style: 'margin-top:8px' },
         h('button', { class: 'btn secondary small', type: 'button', id: 'btn-regen', onclick: () => { resetEdit(); toast('Texto atualizado com os dados atuais', 'ok'); } }, icon('refresh'), 'Usar dados atuais (descarta edição)'))));
   const restoreBtn = h('button', { class: 'linkbtn', type: 'button', id: 'btn-restore', hidden: true, onclick: async () => {
@@ -781,6 +888,8 @@ function screenReport(shift) {
     editBadge.hidden = !edited;
     restoreBtn.hidden = !edited;
     staleBox.hidden = !(edited && shift.reportEdit.base !== auto);
+    const fm = !isDefaultFormat(fmt);
+    fmtBtn.classList.toggle('on', fm);
   };
   function resetEdit() {
     shift.reportEdit = null;
@@ -790,6 +899,30 @@ function screenReport(shift) {
     paintEdit();
     if (!previewEl.hidden) previewEl.innerHTML = whatsappToHtml(getText());
   }
+  // formatação personalizada mudou: regenera o texto base (preserva edição manual, que passa a "desatualizada")
+  const reflow = () => {
+    fmt = prefs.getFormat();
+    auto = reportText(shift, fmt);
+    if (!shift.reportEdit) { editor.value = auto; grow(); }
+    paintEdit();
+    previewEl.innerHTML = whatsappToHtml(getText());
+  };
+  const openFormat = () => {
+    const mk = (key, label) => {
+      const cb = h('input', { type: 'checkbox', 'data-fmt': key, checked: !!fmt[key],
+        onchange: () => { prefs.setFormat({ ...prefs.getFormat(), [key]: cb.checked }); reflow(); } });
+      return h('label', { class: 'checkrow' }, cb, ` ${label}`);
+    };
+    const bulletBtns = BULLETS.map(([v, l]) => h('button', { type: 'button', class: 'chip', 'data-bullet': v || 'none', 'aria-pressed': String(fmt.bullet === v),
+      onclick: () => { prefs.setFormat({ ...prefs.getFormat(), bullet: v }); sync(); reflow(); } }, l));
+    const toggles = [['boldQuestions', 'Perguntas em negrito'], ['boldTitles', 'Títulos dos setores em negrito'], ['upperTitles', 'Títulos em MAIÚSCULAS'],
+      ['numberTitles', 'Numerar os setores (1., 2., …)'], ['blankBetween', 'Linha em branco entre os setores'], ['showDate', 'Incluir a data no topo']].map(([k, l]) => mk(k, l));
+    const sync = () => { const f = prefs.getFormat(); toggles.forEach((t) => { const c = t.querySelector('input'); c.checked = !!f[c.dataset.fmt]; }); bulletBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(f.bullet === BULLETS[i][0]))); };
+    const reset = h('button', { class: 'btn ghost', type: 'button', id: 'fmt-reset', onclick: () => { prefs.resetFormat(); sync(); reflow(); toast('Formatação padrão restaurada', 'ok'); } }, icon('refresh'), 'Restaurar formatação padrão');
+    sheet({ title: 'Formatação da mensagem', body: h('div', { class: 'stack', id: 'fmt-sheet' },
+      h('p', { class: 'note' }, 'O padrão é o modelo do WhatsApp. Suas escolhas ficam salvas neste navegador e valem para os próximos relatórios. A ordem dos setores não muda.'),
+      h('b', null, 'Marcador das perguntas'), h('div', { class: 'chips' }, bulletBtns), toggles, reset) });
+  };
   editor.addEventListener('input', () => {
     grow();
     const v = editor.value;
@@ -798,8 +931,9 @@ function screenReport(shift) {
     paintEdit();
   });
 
+  const fmtBtn = h('button', { class: 'tab fmtbtn', type: 'button', id: 'btn-format', onclick: openFormat, 'aria-label': 'Formatação da mensagem' }, icon('settings'));
   const tabEdit = h('button', { class: 'tab', type: 'button', id: 'tab-edit', role: 'tab', 'aria-selected': 'false' }, icon('edit'), 'Editar texto');
-  const tabFmt = h('button', { class: 'tab on', type: 'button', id: 'tab-fmt', role: 'tab', 'aria-selected': 'true' }, icon('check'), 'Como fica no WhatsApp');
+  const tabFmt = h('button', { class: 'tab on', type: 'button', id: 'tab-fmt', role: 'tab', 'aria-selected': 'true' }, icon('check'), 'Prévia WhatsApp');
   const setTab = (fmt) => {
     tabEdit.classList.toggle('on', !fmt); tabFmt.classList.toggle('on', fmt);
     tabEdit.setAttribute('aria-selected', String(!fmt)); tabFmt.setAttribute('aria-selected', String(fmt));
@@ -907,7 +1041,7 @@ function screenReport(shift) {
         ? h('div', { class: 'banner warn', id: 'alerts-box' }, icon('alert'), h('div', null, h('b', null, 'Ocorrências: '), alerts.map((a) => `${a.title} (${a.alerts.join(', ')})`).join(' · ')))
         : null,
       staleBox,
-      h('div', { class: 'tabs', role: 'tablist' }, tabFmt, tabEdit, editBadge),
+      h('div', { class: 'tabs', role: 'tablist' }, tabFmt, tabEdit, fmtBtn, editBadge),
       editor,
       previewEl,
       h('div', { class: 'editfoot' }, restoreBtn, h('span', { class: 'note' }, 'Para alterar a mensagem, toque em Editar texto. Copiar e WhatsApp enviam exatamente o que você vê aqui.')),
@@ -930,7 +1064,7 @@ function screenReport(shift) {
 // Admin: editar o formulário (protegido por senha)
 // =====================================================================
 let adminOk = false;
-const TYPE_LABEL = { yn: 'Sim / Não / N/A', num: 'Número', text: 'Texto curto', area: 'Texto longo' };
+const TYPE_LABEL = { yn: 'Sim / Não / N/A', num: 'Número', text: 'Texto curto', area: 'Texto longo', multi: 'Lista de nomes' };
 
 function screenAdminRoute(sub) {
   if (!adminOk) return screenAdminLogin();

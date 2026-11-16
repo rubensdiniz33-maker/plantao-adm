@@ -1,4 +1,4 @@
-# PLANTÃO ADM — versão 2.1
+# PLANTÃO ADM — versão 2.2.1
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
 **Prioridade de uso:** o objetivo final é **Copiar** o relatório ou **encaminhá-lo ao WhatsApp** — esses são os dois botões principais (fixos no rodapé do relatório). Imagem/PDF são secundários.
@@ -39,6 +39,16 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA |
 | `fonts/` | Plus Jakarta Sans (local; licença OFL em `PLUS-JAKARTA-LICENSE.txt`) |
 | `tests/` | Testes unitários (Node) e de ponta a ponta (Playwright/Chromium) |
+
+## Novidades da versão 2.2
+
+- **2.2.1:** botão **Relatório** fixo no rodapé de **todos** os setores (em telas de 320 px vira só o ícone).
+
+- **Valores no relatório:** número não digitado = **0** (e já conta como preenchido, não trava o setor); **N/A = `-`**; texto/Sim-Não vazio = `-`. Atenção: um setor ainda não iniciado também sai com 0 nos números (os avisos de pendência continuam).
+- **Botões − e + sem zoom:** `touch-action: manipulation` em toda a página e nos botões, sem seleção de texto ao tocar rápido. *Corrigido por CSS padrão; não consegui reproduzir o zoom do Safari no iPhone aqui — confirme no aparelho (checklist).*
+- **Pronto Atendimento — vários médicos:** campo "Médico de plantão" virou lista de nomes (**Adicionar médico** / remover). No relatório: `Médico de plantão: Dr. A, Dra. B`. O admin também ganhou o tipo "Lista de nomes" para perguntas novas.
+- **Seletor de setores reordenável:** no botão `n/13`, segure e **arraste a alça ⠿** (ou use as setas ↑↓ com a alça focada) para montar a sua ordem. Vale para o painel, **Próximo/Anterior**, o contador e "próximo pendente"; fica salva **neste navegador** (`localStorage`). O **relatório final nunca muda de ordem** (Pronto Atendimento continua por último). "Ordem padrão" restaura. Novo atalho "Ir para o próximo pendente".
+- **Formatação da mensagem:** botão de ajustes (ícone) ao lado das abas do relatório: marcador (•, -, ▪, ➤ ou nenhum), perguntas e títulos em negrito, títulos em MAIÚSCULAS, numeração dos setores, linha em branco entre setores e data no topo. O **padrão é o modelo do WhatsApp**; a escolha fica salva no navegador, vale para os próximos relatórios e tem "Restaurar padrão". Se você já editou o texto à mão, ele é preservado e aparece o aviso de texto desatualizado. Imagem/PDF não usam essa formatação.
 
 ## Novidades da versão 2.1
 
@@ -90,14 +100,19 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 ## Testes
 
 ```bash
-npm test                              # 28 testes de lógica (Node)
+npm test                              # 32 testes de lógica (Node)
 node tests/serve.mjs 5173 &           # servidor
-python3 tests/e2e.py                  # 156 verificações no Chromium (Playwright)
+python3 tests/e2e.py                  # 194 verificações no Chromium (Playwright)
 CSP=1 node tests/serve.mjs 5174 &     # mesma suíte sob os cabeçalhos/CSP do vercel.json:
 BASE_URL=http://localhost:5174 python3 tests/e2e.py
 ```
 
-### Relatório de testes executados (14/11/2026, versão 2.1)
+### Relatório de testes executados (16/11/2026, versão 2.2)
+
+**Versão 2.2 — executado e aprovado** (32/32 unitários e 194/194 de ponta a ponta, também sob a CSP da Vercel): 0 para número vazio e "-" para N/A; três toques rápidos em + chegam a 3 sem zoom (Chromium) e `touch-action` aplicado; PA com 3 médicos, persistência ao recarregar e remoção; arrastar (mouse) e setas reordenam o seletor, painel/Próximo/Anterior/contador seguem a ordem, ordem persiste e o relatório fica idêntico; formatação aplicada ao vivo, copiada, salva e restaurada; **persistência nos dois modos**: iniciar do zero (recarregar, voltar aos campos) e iniciar a partir do anterior (dados copiados, edição + confirmação persistem, plantão original intacto).
+**Não testado na 2.2:** arrastar com o dedo em iPhone/Android reais (usei mouse e teclado), o zoom de toque duplo no Safari real, teclado virtual.
+
+### Relatório de testes (versão 2.1)
 
 **Versão 2.1 — executado e aprovado** (28/28 unitários e 156/156 de ponta a ponta, também sob a CSP da Vercel): ocorrências relevantes nos 13 setores; 13 linhas em branco só entre setores; relatório sem enfermeiro/horário; abertura em modo WhatsApp sem asteriscos; crédito e ícone de admin na Home; senha errada recusada / correta aceita / sair tranca; remover, renomear e adicionar pergunta refletidos no formulário e no relatório; persistência ao recarregar; exportar/importar/restaurar a configuração; respostas de perguntas removidas preservadas; 320 px sem rolagem horizontal.
 **Não testado na 2.1:** aparelho real; o fluxo "publicar `form-config.json` na Vercel e abrir em outro aparelho" (testei exportar e importar o arquivo, não a publicação).
@@ -144,6 +159,9 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 - [ ] Fechar o app/navegador por completo e reabrir: plantão e respostas continuam lá.
 - [ ] Modo avião: o app abre e os dados aparecem.
 - [ ] Conferir o ícone/favicon do coração na aba e na tela inicial.
+- [ ] Tocar rápido várias vezes no **+** de um campo numérico: a página não pode dar zoom.
+- [ ] No botão `n/13`, **arrastar a alça ⠿ com o dedo** para reordenar (a rolagem da lista não deve atrapalhar) e conferir que o relatório mantém a ordem.
+- [ ] No PA, adicionar 2 médicos e conferir a mensagem.
 - [ ] Passar de 1/13 até 13/13 com **Próximo** e confirmar que o último leva ao relatório.
 - [ ] Relatório completo → **Copiar** → colar no WhatsApp: formatação correta.
 - [ ] **Gerar imagens** (páginas legíveis, cores) e **Exportar PDF**.

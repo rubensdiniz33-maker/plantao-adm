@@ -148,6 +148,8 @@ def main():
         top1 = pg.locator('.fieldcard:visible').first.bounding_box()['y']
         check('Setor: topo compacto (cabeçalho ≤ 72px, 1º campo logo abaixo, sem faixa nem avisos)', hh <= 72 and top1 <= 100 and pg.locator('#strip-label, .strip, .content > .banner').count() == 0, f'head={hh} first={top1}')
         check('Selo de salvamento compacto sem texto residual', 'null' not in pg.inner_text('.stickyhead') and pg.locator('.stickyhead .savebadge').count() == 1)
+        rb_ = pg.locator('#btn-report-sector').bounding_box()
+        check('"Relatório" visível em TODOS os setores (rodapé fixo, ≥ 44px)', pg.locator('#btn-report-sector').is_visible() and rb_['height'] >= 44 and rb_['y'] + rb_['height'] <= 844)
         check('Setor: só um filete fino de progresso (≤ 4px)', pg.locator('.stickyhead .pbar').count() == 1 and pg.locator('.stickyhead .pbar').bounding_box()['height'] <= 4)
         pg.click('#btn-sectors'); pg.wait_for_selector('.srow')
         check('Seletor: lista os 13 setores e marca o atual', pg.locator('.srow').count() == 13 and pg.locator('.srow[aria-current="true"]').count() == 1 and 'Portaria' in pg.inner_text('.srow[aria-current="true"]'))
@@ -348,7 +350,7 @@ def main():
         # relatório antes de confirmar não leva dado velho
         pg.goto(shift2 + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         r_unconf = plain(pg)
-        check('Relatório antes de confirmar NÃO envia dados do plantão anterior (campos com "-")', 'Dr. Álvaro' not in r_unconf and 'Quantidade estimada disponível: -' in r_unconf and 'Bom dia' not in r_unconf and 'Não informado' not in r_unconf)
+        check('Relatório antes de confirmar NÃO envia dados do plantão anterior (números 0 e texto "-")', 'Dr. Álvaro' not in r_unconf and 'Quantidade estimada disponível: 0' in r_unconf and 'Bom dia' not in r_unconf and 'Não informado' not in r_unconf)
         check('Relatório avisa setores aguardando revisão', '13 setor(es) ainda aguardam revisão' in pg.inner_text('#review-warn'))
         # revisar Portaria: valores copiados e botão confirmar
         pg.goto(shift2 + '/s/portaria'); pg.wait_for_selector('[data-field="equipe_completa"]')
@@ -546,6 +548,139 @@ def main():
         check('Layout 320px: telas novas sem rolagem horizontal', not bad_r, str(bad_r))
         check('Sem erros de console na sessão E', not errs4, str(errs4[:3]))
         c4.close()
+
+        # ============================ F) Revisão 4
+        c5 = b.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True, locale='pt-BR', accept_downloads=True)
+        c5.grant_permissions(['clipboard-read', 'clipboard-write'], origin=BASE)
+        pg = c5.new_page(); errs5 = []
+        pg.on('pageerror', lambda e: errs5.append(str(e))); pg.on('console', lambda m: errs5.append(m.text) if m.type == 'error' else None)
+        create_shift(pg, 'Rubens', 'N', '2026-11-16')
+        base_url = pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2])
+        pid = base_url.split('/p/')[1]
+
+        # ---- número vazio = 0; N/A = "-"
+        pg.goto(base_url + '/s/enf_sus'); pg.wait_for_selector('[data-field="leitos"]')
+        pg.click('[data-field="leitos"] .nabtn'); pg.wait_for_timeout(300)
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        rt = plain(pg)
+        check('Número não digitado sai como 0 no relatório', 'Pacientes em diálise: 0' in rt and 'Altas do dia ainda não efetuadas: 0' in rt)
+        check('Marcar N/A sai como "-" (e não 0)', 'Leitos disponíveis: -' in rt and 'Não se aplica' not in rt and 'Não informado' not in rt)
+        check('Texto vazio continua "-"', 'Médico de plantão (FDS): -' in rt)
+
+        # ---- zoom ao tocar várias vezes em + / −
+        pg.goto(base_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
+        ta = pg.evaluate("[document.documentElement, ...document.querySelectorAll('.stepbtn, .nabtn, .seg button')].map(e => getComputedStyle(e).touchAction)")
+        check('Botões e página com touch-action: manipulation (sem zoom por toque duplo)', all(x == 'manipulation' for x in ta), str(set(ta)))
+        plus = '[data-field="quantidade"] [data-step="1"]'
+        for _ in range(3): pg.tap(plus)
+        pg.wait_for_timeout(300)
+        scale = pg.evaluate('window.visualViewport.scale')
+        check('Tocar 3x seguidas em + vai a 3 e a página NÃO dá zoom', pg.input_value('[data-field="quantidade"] input') == '3' and abs(scale - 1) < 0.01, f'scale={scale}')
+        for _ in range(2): pg.tap('[data-field="quantidade"] [data-step="-1"]')
+        check('Tocar 2x em − volta a 1', pg.input_value('[data-field="quantidade"] input') == '1')
+        pg.fill('[data-field="quantidade"] input', '')
+
+        # ---- PA: vários médicos
+        pg.goto(base_url + '/s/pa'); pg.wait_for_selector('[data-field="medico"]')
+        check('PA: um campo de médico e botão "Adicionar médico"', pg.locator('[data-field="medico"] input').count() == 1 and 'Adicionar médico' in pg.inner_text('#add-medico') and not pg.locator('[data-field="medico"] .rm').first.is_visible())
+        pg.fill('[data-field="medico"] input >> nth=0', 'Dr. Paulo')
+        pg.click('#add-medico'); pg.keyboard.type('Dra. Marta'); pg.click('#add-medico'); pg.keyboard.type('Dr. Caio'); pg.wait_for_timeout(350)
+        check('PA: três médicos (novos campos já focados) e botão remover aparece', pg.locator('[data-field="medico"] input').count() == 3 and pg.locator('[data-field="medico"] .rm >> nth=1').is_visible())
+        check('Botões remover/adicionar com toque ≥ 44px', pg.locator('[data-field="medico"] .rm >> nth=0').bounding_box()['width'] >= 44 and pg.locator('#add-medico').bounding_box()['height'] >= 40)
+        pg.reload(); pg.wait_for_selector('[data-field="medico"]')
+        check('PA: médicos persistem ao recarregar', pg.eval_on_selector_all('[data-field="medico"] input', 'e => e.map(x => x.value)') == ['Dr. Paulo', 'Dra. Marta', 'Dr. Caio'])
+        pg.click('[data-field="medico"] .rm >> nth=1'); pg.wait_for_timeout(350)
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        check('Relatório lista os médicos do PA (sem o removido)', 'Médico de plantão: Dr. Paulo, Dr. Caio' in plain(pg) and 'Marta' not in plain(pg))
+        pg.screenshot(path=f'{SHOTS}/50-pa-medicos.png')
+
+        # ---- seletor: arrastar e reordenar (relatório fixo)
+        orig_report = rawtext(pg)
+        pg.goto(base_url + '/s/portaria'); pg.wait_for_selector('[data-field="equipe_completa"]'); pg.click('#btn-sectors'); pg.wait_for_selector('.srowwrap')
+        order0 = pg.eval_on_selector_all('.srowwrap', 'e => e.map(x => x.dataset.wrap)')
+        check('Seletor: 13 linhas com alça de arrastar (≥ 44px) e botão para o próximo pendente', len(order0) == 13 and pg.locator('.drag').first.bounding_box()['width'] >= 44 and pg.locator('#btn-sheet-next').count() == 1 and pg.locator('#btn-reset-order').is_hidden())
+        hb = pg.locator('[data-drag="recepcao"]').bounding_box()
+        x, y = hb['x'] + hb['width'] / 2, hb['y'] + hb['height'] / 2
+        pg.mouse.move(x, y); pg.mouse.down()
+        for dy in range(0, 215, 15): pg.mouse.move(x, y + dy); pg.wait_for_timeout(30)
+        pg.mouse.up(); pg.wait_for_timeout(300)
+        order1 = pg.eval_on_selector_all('.srowwrap', 'e => e.map(x => x.dataset.wrap)')
+        check('Arrastar "Recepção" para baixo a reposiciona (3 a 5 posições)', 3 <= order1.index('recepcao') <= 5 and order1[0] == 'portaria' and len(set(order1)) == 13, str(order1))
+        labels = pg.eval_on_selector_all('.srowwrap .t', 'e => e.map(x => x.textContent)')
+        check('Números do seletor refletem a nova ordem', labels[0].startswith('1. ') and labels[order1.index('recepcao')].startswith(f'{order1.index("recepcao") + 1}. Recepção'))
+        check('Botão "Ordem padrão" aparece', pg.locator('#btn-reset-order').is_visible())
+        # teclado: sobe "Pronto Atendimento" uma posição
+        pg.focus('[data-drag="pa"]'); pg.keyboard.press('ArrowUp'); pg.wait_for_timeout(200)
+        order2 = pg.eval_on_selector_all('.srowwrap', 'e => e.map(x => x.dataset.wrap)')
+        check('Setas do teclado também reordenam', order2.index('pa') == order1.index('pa') - 1, str(order2))
+        pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
+        check('Navegação segue a ordem do usuário: contador 1/13 na Portaria e Próximo abre o 2º da lista', pg.inner_text('#sel-count') == '1/13')
+        pg.click('#btn-next-sector'); pg.wait_for_selector('.topbar h1'); pg.wait_for_timeout(300)
+        second = order2[1]
+        check('Próximo vai para o 2º setor da ordem personalizada', pg.url.endswith(f'/s/{second}') and pg.inner_text('#sel-count') == '2/13', pg.url)
+        pg.click('#btn-prev-sector'); pg.wait_for_timeout(300)
+        check('Anterior volta ao 1º', pg.url.endswith('/s/portaria') and pg.is_disabled('#btn-prev-sector'))
+        pg.goto(base_url); pg.wait_for_selector('.sectors a.sec')
+        panel_order = pg.eval_on_selector_all('.sectors a.sec', 'e => e.map(x => x.id.replace("sec-", ""))')
+        check('Painel exibe a ordem personalizada', panel_order == order2, str(panel_order))
+        pg.reload(); pg.wait_for_selector('.sectors a.sec')
+        check('Ordem fica salva no navegador (recarregar)', pg.eval_on_selector_all('.sectors a.sec', 'e => e.map(x => x.id.replace("sec-", ""))') == order2)
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        check('Relatório final mantém EXATAMENTE a mesma ordem e texto', rawtext(pg) == orig_report)
+        titles_pos = [rawtext(pg).find(f'{i + 1}. {t.upper()}') for i, t in enumerate(TITLES)]
+        check('Relatório: Pronto Atendimento continua por último', titles_pos == sorted(titles_pos) and rawtext(pg).rfind('13. PRONTO ATENDIMENTO') > 0)
+        pg.goto(base_url + '/s/portaria'); pg.wait_for_selector('[data-field]'); pg.click('#btn-sectors'); pg.wait_for_selector('#btn-reset-order'); pg.click('#btn-reset-order'); pg.wait_for_timeout(200)
+        check('"Ordem padrão" restaura a sequência original', pg.eval_on_selector_all('.srowwrap', 'e => e.map(x => x.dataset.wrap)') == order0 and pg.locator('#btn-reset-order').is_hidden())
+        pg.click('.sheethead .iconbtn')
+
+        # ---- formatação da mensagem
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#btn-format'); pg.click('#btn-format'); pg.wait_for_selector('#fmt-sheet')
+        pg.click('#fmt-sheet [data-fmt="boldQuestions"]'); pg.click('#fmt-sheet [data-bullet="-"]'); pg.click('#fmt-sheet [data-fmt="blankBetween"]'); pg.wait_for_timeout(300)
+        fr_ = rawtext(pg)
+        check('Formatação: sem negrito nas perguntas, marcador "-" e sem linha em branco', '- Equipe completa?' in fr_ and '*Equipe completa?*' not in fr_ and '\n\n' not in fr_ and '*1. PORTARIA/ACOLHIMENTO*' in fr_, repr(fr_[:160]))
+        check('Formatação: prévia atualizada ao vivo e conteúdo/ordem iguais', 'Equipe completa?' in pg.evaluate("document.getElementById('report-preview').innerText") and fr_.replace('- ', '• ').count('\n') < orig_report.count('\n'))
+        pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
+        pg.click('#btn-copy-report'); clipf = pg.evaluate('navigator.clipboard.readText()')
+        check('Copiar usa a formatação escolhida', clipf == fr_)
+        pg.reload(); pg.wait_for_selector('#report-text', state='attached')
+        check('Formatação fica salva no navegador (recarregar)', '- Equipe completa?' in rawtext(pg))
+        pg.goto(base_url); pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#btn-format'); pg.click('#btn-format'); pg.wait_for_selector('#fmt-sheet')
+        check('Controles refletem a preferência salva', pg.is_checked('#fmt-sheet [data-fmt="boldQuestions"]') is False and pg.get_attribute('#fmt-sheet [data-bullet="-"]', 'aria-pressed') == 'true')
+        pg.click('#fmt-reset'); pg.wait_for_timeout(300); pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
+        check('Restaurar formatação padrão volta ao modelo WhatsApp', rawtext(pg) == orig_report)
+        pg.screenshot(path=f'{SHOTS}/51-relatorio-formato.png')
+
+        # ---- persistência: iniciar do zero x iniciar a partir do anterior
+        A = {'portaria': dict(equipe_completa='sim', ausencia='nao', cobertura='sim'), 'rouparia': dict(enxoval_suficiente='sim', quantidade='42', reposicao_urgente='nao')}
+        for sid, d in A.items():
+            pg.goto(base_url); pg.wait_for_selector('.sectors a.sec'); fill_sector(pg, sid, d)
+        pg.reload(); pg.wait_for_selector('.sectors a.sec')
+        check('Do zero: respostas persistem ao recarregar o painel', st(pg, 'portaria')[0] == 'done' and pg.evaluate("window.location.hash").endswith(pid))
+        pg.goto(base_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
+        check('Do zero: valores voltam nos campos', pg.input_value('[data-field="quantidade"] input') == '42' and pg.get_attribute('[data-field="enxoval_suficiente"] [data-v="sim"]', 'aria-pressed') == 'true')
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached'); reportA = rawtext(pg)
+        pg.click('#btn-finalize'); pg.wait_for_selector('.dlg'); pg.click('.dlg .btn.green'); pg.wait_for_selector('#final-banner')
+        pg.goto(BASE + '/#/'); pg.wait_for_selector('#btn-start'); pg.click('#btn-start'); pg.wait_for_selector('.dlg')
+        pg.click('.dlg .btn:has-text("Sim, continuar")'); pg.wait_for_selector('#btn-create'); pg.fill('[data-nurse="0"]', 'Alana'); pg.fill('#f-date', '2026-11-17')
+        pg.click('#btn-create'); pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.wait_for_selector('#sec-portaria')
+        base_b = pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2])
+        pg.goto(base_b + '/s/pa'); pg.wait_for_selector('[data-field="medico"]')
+        check('A partir do anterior: lista de médicos copiada (2 nomes) para revisão', pg.eval_on_selector_all('[data-field="medico"] input', 'e => e.map(x => x.value)') == ['Dr. Paulo', 'Dr. Caio'])
+        pg.goto(base_b + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
+        check('A partir do anterior: valores copiados nos campos', pg.input_value('[data-field="quantidade"] input') == '42')
+        pg.fill('[data-field="quantidade"] input', '57'); pg.click('#btn-confirm-sector'); pg.wait_for_timeout(500)
+        pg.reload(); pg.wait_for_selector('.topbar h1'); pg.goto(base_b + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
+        check('A partir do anterior: edição e confirmação persistem ao recarregar', pg.input_value('[data-field="quantidade"] input') == '57' and pg.locator('#btn-confirm-sector').is_hidden())
+        pg.goto(base_b + '/s/pa'); pg.wait_for_selector('[data-field="medico"]'); pg.click('#add-medico'); pg.keyboard.type('Dra. Nova'); pg.click('#btn-confirm-sector'); pg.wait_for_timeout(500)
+        pg.goto(base_b + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        rb = plain(pg)
+        check('Plantão B: relatório com dados confirmados/alterados e médicos do PA', 'Quantidade estimada disponível: 57' in rb and 'Médico de plantão: Dr. Paulo, Dr. Caio, Dra. Nova' in rb)
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        check('Plantão A (original) não foi alterado pelo B', rawtext(pg) == reportA and 'Quantidade estimada disponível: 42' in plain(pg))
+        pg.goto(BASE + '/'); pg.wait_for_selector('#btn-start')
+        check('Sem erros de console na sessão F', not errs5, str(errs5[:3]))
+        c5.close()
+
 
         b.close()
 

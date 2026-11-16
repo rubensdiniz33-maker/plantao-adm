@@ -3,11 +3,12 @@
 
 export const NA = '__na__'; // "Não se aplica"
 
-// Tipos de campo: yn (Sim/Não/N/A), num (inteiro >= 0), text (linha), area (observação multilinha)
+// Tipos de campo: yn (Sim/Não/N/A), num (inteiro >= 0; vazio vale 0), text (linha), area (observação multilinha), multi (lista de nomes)
 const yn = (id, label, extra = {}) => ({ id, label, type: 'yn', ...extra });
 const num = (id, label, extra = {}) => ({ id, label, type: 'num', ...extra });
 const text = (id, label, extra = {}) => ({ id, label, type: 'text', ...extra });
 const area = (id, label, extra = {}) => ({ id, label, type: 'area', ...extra });
+const multi = (id, label, extra = {}) => ({ id, label, type: 'multi', ...extra });
 
 // Condições: { field, eq: 'sim' } | { field, gt: 0 } | { field, filled: true }
 // Alertas (ocorrência operacional): alert: 'sim' | 'nao' | 'gt0' | 'text'
@@ -137,7 +138,7 @@ export const SECTORS = [
       num('aguard_transf', 'Pacientes aguardando transferência'),
       text('maior_boarding', 'Maior tempo de boarding no PA', { placeholder: 'Ex.: 5h30' }),
       yn('equipe_completa', 'Equipe completa?', { alert: 'nao', alertMsg: 'Equipe incompleta' }),
-      text('medico', 'Médico de plantão'),
+      multi('medico', 'Médico de plantão', { addLabel: 'Adicionar médico', placeholder: 'Nome do médico' }),
       area('ocorrencias', 'Ocorrências relevantes', { optional: true, alert: 'text', alertMsg: 'Ocorrências relevantes' }),
     ],
   },
@@ -147,7 +148,7 @@ export const SECTORS = [
 // Config: { version:1, sectors: { [id]: { removed:[fieldId], labels:{fieldId:texto}, added:[{id,label,type,optional}] } } }
 const DEFAULT_FIELDS = Object.fromEntries(SECTORS.map((sec) => [sec.id, sec.fields.map((f) => ({ ...f }))]));
 export const defaultFields = (id) => DEFAULT_FIELDS[id].map((f) => ({ ...f }));
-const FIELD_TYPES = ['yn', 'num', 'text', 'area'];
+const FIELD_TYPES = ['yn', 'num', 'text', 'area', 'multi'];
 
 export function sanitizeFormConfig(raw) {
   const out = { version: 1, sectors: {} };
@@ -197,6 +198,9 @@ export const MAX_NUM_DIGITS = 6;
 // ---------- Valores ----------
 
 export const isAnswered = (v) => v !== undefined && v !== null && v !== '';
+// Número não digitado vale 0 (regra do hospital): conta como preenchido e sai como 0 no relatório.
+export const isFilled = (f, v) => isAnswered(v) || f.type === 'num';
+export const splitNames = (v) => String(v || '').split('\n').map((x) => x.trim()).filter(Boolean);
 
 const NEGATIVE_TEXT =
   /^\s*(nada|nenhum[a]?|nenhuma\s+(ocorr[eê]ncia|pend[eê]ncia|reclama[cç][aã]o|altera[cç][aã]o|intercorr[eê]ncia)|sem\s+(ocorr[eê]ncias?|pend[eê]ncias?|reclama[cç][oõ]es?|altera[cç][oõ]es?|intercorr[eê]ncias?|atrasos?)|n[aã]o(\s+h[aá])?|nada\s+a\s+relatar|-+|0+)\s*[.!]?\s*$/i;
@@ -227,7 +231,7 @@ export function visibleFields(sector, answers) {
 export function sectorProgress(sector, answers = {}) {
   const vis = visibleFields(sector, answers);
   const any = vis.some((f) => isAnswered(answers[f.id]));
-  const missing = vis.filter((f) => !f.optional && !isAnswered(answers[f.id]));
+  const missing = vis.filter((f) => !f.optional && !isFilled(f, answers[f.id]));
   let status = 'none';
   if (any) status = missing.length === 0 ? 'done' : 'progress';
   return { status, missing, total: vis.filter((f) => !f.optional).length };
@@ -262,10 +266,11 @@ export function sectorStatus(shift, sector) {
 }
 
 // Próximo setor que ainda precisa de atenção (não "done"), depois de fromIdx e dando a volta; exclui o próprio.
-export function nextAttention(shift, fromIdx = -1) {
-  const after = SECTORS.map((_, i) => i).filter((i) => i > fromIdx);
-  const before = SECTORS.map((_, i) => i).filter((i) => i < fromIdx);
-  for (const i of [...after, ...before]) if (sectorStatus(shift, SECTORS[i]) !== 'done') return SECTORS[i];
+// `list` = ordem de navegação do usuário (padrão: ordem original).
+export function nextAttention(shift, fromIdx = -1, list = SECTORS) {
+  const after = list.map((_, i) => i).filter((i) => i > fromIdx);
+  const before = list.map((_, i) => i).filter((i) => i < fromIdx);
+  for (const i of [...after, ...before]) if (sectorStatus(shift, list[i]) !== 'done') return list[i];
   return null;
 }
 

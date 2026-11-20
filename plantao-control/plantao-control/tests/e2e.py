@@ -81,7 +81,7 @@ def create_shift(pg, nurse, type_=None, date=None, base=False):
     if type_: pg.click(f'#type-{type_}')
     if date: pg.fill('#f-date', date)
     pg.fill('[data-nurse="0"]', nurse)
-    pg.click('#btn-create'); pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.wait_for_selector('#sec-portaria')
+    pg.click('#btn-create'); pg.wait_for_selector('#sec-portaria')
 
 def main():
     tmp = tempfile.mkdtemp(prefix='plantao-e2e-')
@@ -136,7 +136,9 @@ def main():
         check('Apresentação: wa.me com texto codificado idêntico', len(opened) == 1 and urllib.parse.unquote(opened[0].split('text=')[1]) == clip)
         pg.click('#type-MT'); check('Abertura: MT muda saudação e horário', 'Bom dia!' in pg.inner_text('#opening-preview') and '07 às 19hrs' in pg.inner_text('#opening-preview')); pg.click('#type-N')
         pg.screenshot(path=f'{SHOTS}/10-abertura.png')
-        pg.click('#btn-create'); pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: Copiar e WhatsApp ficam fixos na barra inferior junto do botão de começar', pg.locator('.actionbar #btn-copy-open').count() == 1 and pg.locator('.actionbar #btn-wa-open').count() == 1 and pg.locator('.actionbar #btn-create').count() == 1)
+        pg.click('#btn-create'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: ao criar vai direto ao painel (sem tela redundante de envio)', '/abertura' not in pg.url and pg.locator('#btn-copy-open').count() == 0)
         shift_url = pg.url
         check('Painel: 13 setores na ordem e todos cinza', pg.locator('.sec .name').all_inner_texts() == TITLES and all(st(pg, s)[0] == 'none' for s in SECTORS))
         check('Painel: botão "Continuar" aponta para o 1º setor pendente', 'Portaria/Acolhimento' in pg.inner_text('#btn-continue'))
@@ -216,10 +218,10 @@ def main():
         # ---- relatório
         report = rawtext(pg)
         pg.screenshot(path=f'{SHOTS}/12-relatorio.png')
-        check('Relatório: linha em branco só ENTRE setores (13), nunca dentro do setor', report.count('\n\n') == 13 and '\n\n\n' not in report and all(report.split('\n\n')[i + 1].startswith(f'*{i + 1}. ') for i in range(13)), repr(report[:140]))
+        check('Relatório: linha em branco só ENTRE setores (13), nunca dentro do setor', report.count('\n\n') == 13 and '\n\n\n' not in report and all(report.split('\n\n')[i + 1].startswith(f'*{TITLES[i].upper()}*') for i in range(13)), repr(report[:140]))
         check('Relatório: sem enfermeiro nem horário (já estão na apresentação)', 'Enf:' not in report and 'Horário' not in report and 'Rubens' not in report and 'Alana' not in report)
         check('Relatório: "Ocorrências relevantes" em todos os 13 setores', report.count('*Ocorrências relevantes:*') + report.count('*Ocorrências relevantes*') == 13, str(report.count('Ocorrências relevantes')))
-        pos = [report.find(f'{i+1}. {t.upper()}') for i, t in enumerate(TITLES)]
+        pos = [report.find(f'*{t.upper()}*') for i, t in enumerate(TITLES)]
         check('Relatório: 13 setores em ordem', all(x >= 0 for x in pos) and pos == sorted(pos), str(pos))
         faltando = [m for m in ['Equipe completa?','Ausência no plantão?','Cobertura realizada?','Pendências administrativas relevantes','Reclamações registradas','Medicamentos críticos em falta?','Enxoval suficiente para o plantão?','Quantidade estimada disponível','Necessidade de reposição urgente?','Exames indispensáveis?','Equipamentos com falha?','Médico de sobreaviso','Previsão de exames a serem realizados','Intercorrências','Procedimentos realizados','Procedimentos suspensos','Atrasos','Autoclave em funcionamento','Leitos disponíveis','Altas do dia ainda não efetuadas','Pacientes aguardando transferência','Pacientes em diálise','Leitos bloqueados/interditados','Médico de plantão (FDS)','Enfermeiro(a) de plantão','Quantidade de pacientes em observação','Quantidade de pacientes aguardando atendimento','Quantidade de pacientes em boarding','Maior tempo de boarding no PA','Ocorrências relevantes'] if m not in report]
         check('Relatório: todas as perguntas originais presentes', not faltando, str(faltando))
@@ -238,11 +240,11 @@ def main():
         # prévia formatada
         fm = fmttext(pg)
         bold = pg.eval_on_selector_all('#report-preview strong', 'els => els.map(e => e.textContent)')
-        check('Prévia WhatsApp: perguntas em negrito', 'Equipe completa?' in bold and 'Leitos disponíveis:' in bold and '1. PORTARIA/ACOLHIMENTO' in bold and 'Enf:' not in bold, str(bold[:8]))
+        check('Prévia WhatsApp: perguntas em negrito', 'Equipe completa?' in bold and 'Leitos disponíveis:' in bold and 'PORTARIA/ACOLHIMENTO' in bold and '1. PORTARIA/ACOLHIMENTO' not in bold and 'Enf:' not in bold, str(bold[:8]))
         pg.click('#tab-edit')
         pg.click('#btn-copy-report')
         clip = pg.evaluate('navigator.clipboard.readText()')
-        check('Copiar: texto WhatsApp com negrito e parágrafo entre setores', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\n*Data:* 13/11/2026\n\n*1. PORTARIA/ACOLHIMENTO*\n• *Equipe completa?* Sim') and '\n\n\n' not in clip and '*13. PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
+        check('Copiar: texto WhatsApp com negrito e parágrafo entre setores', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\n*Data:* 13/11/2026\n\n*PORTARIA/ACOLHIMENTO*\n• *Equipe completa?* Sim') and '\n\n\n' not in clip and '*PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
         check('Copiar: asteriscos balanceados em todas as linhas', all(l.count('*') % 2 == 0 for l in clip.split('\n')))
         pg.click('#tab-fmt')
         pg.evaluate("() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('report-preview')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }")
@@ -284,7 +286,7 @@ def main():
         pg.click('#tab-edit'); pg.click('#report-text'); pg.keyboard.press('Control+A'); pg.keyboard.press('Delete'); pg.wait_for_timeout(300)
         pg.click('#btn-copy-report'); check('Texto apagado: Copiar avisa que o relatório está vazio', 'vazio' in pg.inner_text('#toast'))
         pg.reload(); pg.wait_for_selector('#report-text', state='attached')
-        check('Apagar tudo e recarregar volta ao texto gerado (não perde o relatório)', '1. PORTARIA/ACOLHIMENTO' in rawtext(pg))
+        check('Apagar tudo e recarregar volta ao texto gerado (não perde o relatório)', 'PORTARIA/ACOLHIMENTO' in rawtext(pg))
         pg.click('#more-formats summary')
         pg.click('#btn-image'); pg.wait_for_selector('.imgpages img', timeout=15000)
         n_imgs = pg.locator('.imgpages img').count()
@@ -301,9 +303,9 @@ def main():
 
         # ---- finalizar
         pg.click('#btn-finalize'); pg.wait_for_selector('.dlg')
-        check('Finalização: mostra ocorrências e confirmação por profissional', 'ocorrência' in pg.inner_text('.dlg') and pg.locator('#finalize-by option').count() == 2)
-        pg.select_option('#finalize-by', 'Alana'); pg.click('.dlg .btn.green'); pg.wait_for_selector('#final-banner')
-        check('Finalização: data/hora e responsável', 'Alana' in pg.inner_text('#final-banner') and re.search(r'\d{2}/\d{2}/\d{4} \d{2}:\d{2}', pg.inner_text('#final-banner')) is not None)
+        check('Finalização: diálogo "Finalizar coleta do ADM" simples, sem seletor de responsável', 'Finalizar coleta do ADM' in pg.inner_text('.dlg') and pg.locator('#finalize-by').count() == 0 and pg.locator('.dlg .btn.green').inner_text() == 'Finalizar coleta')
+        pg.click('.dlg .btn.green'); pg.wait_for_selector('#final-banner')
+        check('Finalização: mensagem simples "Bom plantão" e data/hora', 'Bom plantão' in pg.inner_text('#final-banner') and re.search(r'\d{2}/\d{2}/\d{4} \d{2}:\d{2}', pg.inner_text('#final-banner')) is not None and 'plantão finalizado' not in pg.inner_text('#final-banner').lower())
         pg.goto(shift_url + '/s/rouparia'); pg.wait_for_selector('[data-field="quantidade"]')
         pg.fill('[data-field="quantidade"] input', '130'); pg.wait_for_timeout(500)
         pg.goto(shift_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
@@ -311,7 +313,7 @@ def main():
         # atividade registrada em segundo plano (dados), sem tela
         stored = pg.evaluate("""() => new Promise((res) => { const r = indexedDB.open('plantao-control'); r.onsuccess = () => { const g = r.result.transaction('shifts').objectStore('shifts').getAll(); g.onsuccess = () => res(g.result.map(s => s.activity.map(a => a.text))); }; })""")
         flat = [t for s in stored for t in s]
-        check('Atividade segue sendo gravada em segundo plano (sem tela)', any('Plantão iniciado' in t for t in flat) and any('Relatório finalizado' in t for t in flat) and any('após a finalização' in t for t in flat), str(flat[:5]))
+        check('Atividade segue sendo gravada em segundo plano (sem tela)', any('Plantão iniciado' in t for t in flat) and any('Coleta do ADM finalizada' in t for t in flat) and any('após a finalização' in t for t in flat), str(flat[:5]))
         check('Sem erros de console na sessão A', not errors, str(errors[:3]))
         ctx.close()
 
@@ -332,16 +334,23 @@ def main():
         pg.screenshot(path=f'{SHOTS}/30-pergunta-continuar.png')
         # Não → em branco
         pg.click('.dlg .btn:has-text("Não, em branco")'); pg.wait_for_selector('#btn-create')
-        check('"Não": abre cadastro em branco, sem aviso de continuação', pg.locator('#carry-banner').count() == 0)
+        pg.wait_for_timeout(400)
+        check('"Não": abre cadastro em branco', pg.locator('#btn-create').count() == 1 and pg.locator('.dlg').count() == 0)
         pg.goto(BASE + '/'); pg.wait_for_selector('#btn-start'); pg.click('#btn-start'); pg.wait_for_selector('.dlg')
         pg.click('.dlg .btn:has-text("Sim, continuar")'); pg.wait_for_selector('#btn-create')
-        check('"Sim": cadastro mostra aviso de continuação', 'Continuando do plantão anterior' in pg.inner_text('#carry-banner'))
+        pg.wait_for_timeout(400)
+        check('"Sim": abre o cadastro sem nenhum diálogo adicional', pg.locator('.dlg').count() == 0 and '/novo/' in pg.url)
+        pg.goto(BASE + '/'); pg.wait_for_selector('#btn-start'); pg.evaluate("() => { const b = document.querySelector('#btn-start'); b.click(); b.click(); }"); pg.wait_for_selector('.dlg')
+        check('Início: toque duplo não empilha caixas de diálogo (só uma)', pg.locator('.dlg').count() == 1)
+        pg.click('.dlg .btn:has-text("Sim, continuar")'); pg.wait_for_selector('#btn-create')
         chips = pg.eval_on_selector_all('#recent-nurses .chip', 'els => els.map(e => e.textContent)')
         check('Enfermeiros recentes aparecem como atalhos', chips == ['Rubens', 'Alana'], str(chips))
         pg.click('#recent-nurses .chip[data-name="Alana"]')
         check('Atalho preenche o enfermeiro com um toque', pg.input_value('[data-nurse="0"]') == 'Alana' and pg.locator('#recent-nurses .chip[data-name="Alana"]').count() == 0)
         pg.click('#type-MT'); pg.fill('#f-date', '2026-11-14')
-        pg.click('#btn-create'); pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: Copiar e WhatsApp ficam fixos na barra inferior junto do botão de começar', pg.locator('.actionbar #btn-copy-open').count() == 1 and pg.locator('.actionbar #btn-wa-open').count() == 1 and pg.locator('.actionbar #btn-create').count() == 1)
+        pg.click('#btn-create'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: ao criar vai direto ao painel (sem tela redundante de envio)', '/abertura' not in pg.url and pg.locator('#btn-copy-open').count() == 0)
         shift2 = pg.url
         sts = [st(pg, s)[0] for s in SECTORS]
         check('Plantão copiado: os 13 setores vêm como "Revisar" (nenhum preenchido)', sts == ['review'] * 13 and '0 de 13' in pg.inner_text('#progress-label'), str(sts))
@@ -379,9 +388,16 @@ def main():
         # retomar em andamento + nova pergunta sem finalizar
         pg.goto(BASE + '/'); pg.wait_for_selector('#btn-resume')
         check('Home: plantão em andamento com Retomar (discreto, sem competir com Iniciar)', 'Retomar' in pg.inner_text('#btn-resume') and pg.locator('#btn-start').bounding_box()['height'] > pg.locator('#btn-resume').bounding_box()['height'] * 1.5)
-        pg.click('#btn-start'); pg.wait_for_selector('.dlg'); check('Iniciar com plantão em andamento: avisa antes', 'em andamento' in pg.inner_text('.dlg'))
-        pg.click('.dlg .btn:has-text("Cancelar")')
+        pg.click('#btn-start'); pg.wait_for_selector('.dlg'); dt = pg.inner_text('.dlg')
+        check('Iniciar com plantão em andamento: UMA só pergunta (continuar do último ou em branco), mostrando quem preencheu', 'Continuar a partir do último plantão' in dt and 'em andamento' not in dt and 'Já existe' not in dt and pg.locator('.dlg .btn').count() == 2 and ('Alana' in dt or 'Rubens' in dt), dt[:200])
+        pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
+        check('Cancelar a pergunta (Esc) não cria plantão e volta à Home', pg.locator('.dlg').count() == 0 and pg.locator('#btn-start').is_visible())
+        # barras fixas opacas: nada aparece rolando por trás
+        pg.goto(BASE + '/#/'); pg.click('#btn-resume'); pg.wait_for_selector('.sectors a.sec')
+        bars = pg.evaluate("['.topbar', '.actionbar'].map(q => { const cs = getComputedStyle(document.querySelector(q)); return [cs.backgroundColor, cs.backdropFilter] })")
+        check('Barras superior e inferior com fundo 100% opaco (sem ver a tela rolar por trás)', all(b_[0] == 'rgb(255, 255, 255)' and b_[1] in ('none', '') for b_ in bars), str(bars))
 
+        pg.goto(BASE + '/#/'); pg.wait_for_selector('#btn-backup')
         # ---- backup (exportar/importar via painel)
         pg.click('#btn-backup'); pg.wait_for_selector('#btn-export-backup')
         pg.evaluate("() => { window.__blobs = []; const oc = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return oc(b); }; const ac = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) { window.__dl = this.download; return; } return ac.call(this); }; }")
@@ -455,7 +471,7 @@ def main():
         check('Sem armazenamento: aviso na Home', 'indisponível' in pg.inner_text('.banner'))
         pg.click('#btn-start'); pg.wait_for_selector('#btn-create'); pg.fill('[data-nurse="0"]', 'Sem Banco'); pg.click('#btn-create'); pg.wait_for_timeout(500)
         check('Sem armazenamento: avisa que NÃO foi salvo', 'NÃO foi salvo' in pg.inner_text('#toast'))
-        pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.click('#sec-portaria'); pg.wait_for_selector('[data-field="equipe_completa"]')
+        pg.wait_for_selector('#sec-portaria'); pg.click('#sec-portaria'); pg.wait_for_selector('[data-field="equipe_completa"]')
         pg.click('[data-field="equipe_completa"] [data-v="sim"]'); pg.wait_for_timeout(500)
         check('Sem armazenamento: selo "Não salvo" (não finge sucesso)', 'Não salvo' in pg.inner_text('.savebadge'), pg.inner_text('.savebadge'))
         c2.close()
@@ -478,7 +494,7 @@ def main():
         pg.on('pageerror', lambda e: errs4.append(str(e))); pg.on('console', lambda m: errs4.append(m.text) if m.type == 'error' else None)
         pg.goto(BASE + '/'); pg.wait_for_selector('#btn-start')
         cr = pg.locator('#credit')
-        check('Crédito discreto na Home: "Desenvolvido por Enfermeiro Rubens Diniz"', 'Desenvolvido por Enfermeiro Rubens Diniz' in cr.inner_text() and pg.evaluate("parseFloat(getComputedStyle(document.querySelector('#credit')).fontSize)") <= 12.5)
+        check('Crédito discreto na Home: "por ENF Rubens Diniz" (sem ícone, pequeno e esmaecido)', cr.inner_text().strip() == 'por ENF Rubens Diniz' and 'Enfermeiro' not in cr.inner_text() and pg.locator('#credit svg').count() == 0 and pg.evaluate("parseFloat(getComputedStyle(document.querySelector('#credit')).fontSize)") <= 11 and pg.evaluate("parseFloat(getComputedStyle(document.querySelector('#credit')).opacity)") < 0.8)
         check('Ícone de admin na Home (discreto, ≥ 44px)', pg.locator('#btn-admin').is_visible() and pg.locator('#btn-admin').bounding_box()['width'] >= 44)
         # relatório: padrão = exibição WhatsApp
         create_shift(pg, 'Rubens')
@@ -627,8 +643,8 @@ def main():
         check('Ordem fica salva no navegador (recarregar)', pg.eval_on_selector_all('.sectors a.sec', 'e => e.map(x => x.id.replace("sec-", ""))') == order2)
         pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         check('Relatório final mantém EXATAMENTE a mesma ordem e texto', rawtext(pg) == orig_report)
-        titles_pos = [rawtext(pg).find(f'{i + 1}. {t.upper()}') for i, t in enumerate(TITLES)]
-        check('Relatório: Pronto Atendimento continua por último', titles_pos == sorted(titles_pos) and rawtext(pg).rfind('13. PRONTO ATENDIMENTO') > 0)
+        titles_pos = [rawtext(pg).find(f'*{t.upper()}*') for i, t in enumerate(TITLES)]
+        check('Relatório: Pronto Atendimento continua por último', titles_pos == sorted(titles_pos) and rawtext(pg).rfind('*PRONTO ATENDIMENTO*') > 0)
         pg.goto(base_url + '/s/portaria'); pg.wait_for_selector('[data-field]'); pg.click('#btn-sectors'); pg.wait_for_selector('#btn-reset-order'); pg.click('#btn-reset-order'); pg.wait_for_timeout(200)
         check('"Ordem padrão" restaura a sequência original', pg.eval_on_selector_all('.srowwrap', 'e => e.map(x => x.dataset.wrap)') == order0 and pg.locator('#btn-reset-order').is_hidden())
         pg.click('.sheethead .iconbtn')
@@ -637,7 +653,7 @@ def main():
         pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#btn-format'); pg.click('#btn-format'); pg.wait_for_selector('#fmt-sheet')
         pg.click('#fmt-sheet [data-fmt="boldQuestions"]'); pg.click('#fmt-sheet [data-bullet="-"]'); pg.click('#fmt-sheet [data-fmt="blankBetween"]'); pg.wait_for_timeout(300)
         fr_ = rawtext(pg)
-        check('Formatação: sem negrito nas perguntas, marcador "-" e sem linha em branco', '- Equipe completa?' in fr_ and '*Equipe completa?*' not in fr_ and '\n\n' not in fr_ and '*1. PORTARIA/ACOLHIMENTO*' in fr_, repr(fr_[:160]))
+        check('Formatação: sem negrito nas perguntas, marcador "-" e sem linha em branco', '- Equipe completa?' in fr_ and '*Equipe completa?*' not in fr_ and '\n\n' not in fr_ and '*PORTARIA/ACOLHIMENTO*' in fr_, repr(fr_[:160]))
         check('Formatação: prévia atualizada ao vivo e conteúdo/ordem iguais', 'Equipe completa?' in pg.evaluate("document.getElementById('report-preview').innerText") and fr_.replace('- ', '• ').count('\n') < orig_report.count('\n'))
         pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
         pg.click('#btn-copy-report'); clipf = pg.evaluate('navigator.clipboard.readText()')
@@ -662,7 +678,9 @@ def main():
         pg.click('#btn-finalize'); pg.wait_for_selector('.dlg'); pg.click('.dlg .btn.green'); pg.wait_for_selector('#final-banner')
         pg.goto(BASE + '/#/'); pg.wait_for_selector('#btn-start'); pg.click('#btn-start'); pg.wait_for_selector('.dlg')
         pg.click('.dlg .btn:has-text("Sim, continuar")'); pg.wait_for_selector('#btn-create'); pg.fill('[data-nurse="0"]', 'Alana'); pg.fill('#f-date', '2026-11-17')
-        pg.click('#btn-create'); pg.wait_for_selector('#btn-to-panel'); pg.click('#btn-to-panel'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: Copiar e WhatsApp ficam fixos na barra inferior junto do botão de começar', pg.locator('.actionbar #btn-copy-open').count() == 1 and pg.locator('.actionbar #btn-wa-open').count() == 1 and pg.locator('.actionbar #btn-create').count() == 1)
+        pg.click('#btn-create'); pg.wait_for_selector('#sec-portaria')
+        check('Abertura: ao criar vai direto ao painel (sem tela redundante de envio)', '/abertura' not in pg.url and pg.locator('#btn-copy-open').count() == 0)
         base_b = pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2])
         pg.goto(base_b + '/s/pa'); pg.wait_for_selector('[data-field="medico"]')
         check('A partir do anterior: lista de médicos copiada (2 nomes) para revisão', pg.eval_on_selector_all('[data-field="medico"] input', 'e => e.map(x => x.value)') == ['Dr. Paulo', 'Dr. Caio'])

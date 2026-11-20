@@ -91,10 +91,13 @@ export function toast(message, kind = 'info') {
 
 // ---------- Diálogo ----------
 // actions: [{label, value, variant: 'primary'|'danger'|'ghost'}] → Promise<value>
+let openDialog = null; // só uma caixa de diálogo por vez
 export function dialog({ title, body, actions }) {
-  return new Promise((resolve) => {
+  if (openDialog) return openDialog;
+  openDialog = new Promise((resolve) => {
     const prevFocus = document.activeElement;
     const close = (v) => {
+      openDialog = null;
       overlay.classList.remove('open');
       setTimeout(() => overlay.remove(), 160);
       document.removeEventListener('keydown', onKey);
@@ -115,6 +118,7 @@ export function dialog({ title, body, actions }) {
     const first = card.querySelector('.btn.primary, .btn.danger') || card.querySelector('.btn');
     first?.focus();
   });
+  return openDialog;
 }
 
 export const confirmDialog = ({ title, message, confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false }) =>

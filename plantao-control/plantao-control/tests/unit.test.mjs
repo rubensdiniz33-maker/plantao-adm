@@ -111,7 +111,7 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
   const text = reportText(baseShift());
   let last = -1;
   SECTORS.forEach((s, i) => {
-    const title = `*${i + 1}. ${s.title.toUpperCase()}*`;
+    const title = `*${s.title.toUpperCase()}*`;
     const pos = text.indexOf(title);
     assert.ok(pos > last, `ordem do setor ${s.title}`);
     last = pos;
@@ -120,6 +120,7 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
   assert.ok(text.includes('• *Equipe completa?* -'));
   assert.ok(text.includes('• *Leitos bloqueados/interditados:* 0'));
   assert.ok(!/\n\n\n/.test(text), 'no máximo uma linha em branco');
+  assert.ok(!/\*\d+\. /.test(text), 'títulos sem numeração');
   // nada de dados fixos do exemplo vazando; relatório NÃO leva enfermeiro nem horário (ficam na apresentação)
   const other = reportText(baseShift({ nurses: ['Zélia'], date: '2027-01-02' }));
   assert.ok(!other.includes('Rubens') && !other.includes('Alana') && !other.includes('13/11/2026'));
@@ -129,7 +130,7 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
 test('relatório: uma linha em branco entre setores e nenhuma dentro do setor', () => {
   const lines = reportText(baseShift()).split('\n');
   SECTORS.forEach((s, i) => {
-    const at = lines.indexOf(`*${i + 1}. ${s.title.toUpperCase()}*`);
+    const at = lines.indexOf(`*${s.title.toUpperCase()}*`);
     assert.equal(lines[at - 1], '', `linha em branco antes de ${s.title}`);
     assert.notEqual(lines[at + 1], '');
   });

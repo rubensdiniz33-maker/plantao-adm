@@ -1,4 +1,4 @@
-# PLANTÃO ADM — versão 2.2.1
+# PLANTÃO ADM — versão 2.3.0
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
 **Prioridade de uso:** o objetivo final é **Copiar** o relatório ou **encaminhá-lo ao WhatsApp** — esses são os dois botões principais (fixos no rodapé do relatório). Imagem/PDF são secundários.
@@ -42,6 +42,7 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 
 ## Novidades da versão 2.2
 
+- **2.2.2:** iniciar plantão tem **uma única pergunta** ("Continuar a partir do último plantão?" — mostra data, turno e quem preencheu); plantão em andamento não gera outra pergunta (use "Retomar" na Home). O "último plantão" é sempre o mais recente guardado **neste aparelho**, seja de quem for. Barras superior e inferior agora são 100% opacas (nada aparece rolando por trás).
 - **2.2.1:** botão **Relatório** fixo no rodapé de **todos** os setores (em telas de 320 px vira só o ícone).
 
 - **Valores no relatório:** número não digitado = **0** (e já conta como preenchido, não trava o setor); **N/A = `-`**; texto/Sim-Não vazio = `-`. Atenção: um setor ainda não iniciado também sai com 0 nos números (os avisos de pendência continuam).
@@ -56,7 +57,7 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 - **Relatório final:** uma **linha em branco entre os setores** (dentro do setor continua sem espaços) e **sem enfermeiro e horário** (já vão na mensagem de apresentação). Imagem/PDF também.
 - **Relatório abre na exibição do WhatsApp** (negrito real, sem asteriscos); o texto cru fica na aba **Editar texto**.
 - **Editar o formulário (admin):** ícone de ajustes no canto da Home → senha → renomear, remover/restaurar e adicionar perguntas em cada setor (Sim/Não/N/A, número, texto curto ou longo; opcional ou não). Perguntas novas entram antes de "Ocorrências relevantes". Remover uma pergunta **não apaga respostas já registradas**; se remover uma pergunta "pai", as condicionais dela somem junto.
-- **Crédito discreto:** "Desenvolvido por Enfermeiro Rubens Diniz" no rodapé da Home e do admin.
+- **Crédito discreto:** "por ENF Rubens Diniz" (pequeno, esmaecido, sem ícone) no rodapé da Home e do admin.
 
 ### Senha e alcance das alterações do formulário
 
@@ -102,7 +103,7 @@ Não abra `index.html` direto por `file://` (módulos ES exigem HTTP).
 ```bash
 npm test                              # 32 testes de lógica (Node)
 node tests/serve.mjs 5173 &           # servidor
-python3 tests/e2e.py                  # 194 verificações no Chromium (Playwright)
+python3 tests/e2e.py                  # 197 verificações no Chromium (Playwright)
 CSP=1 node tests/serve.mjs 5174 &     # mesma suíte sob os cabeçalhos/CSP do vercel.json:
 BASE_URL=http://localhost:5174 python3 tests/e2e.py
 ```
@@ -113,6 +114,15 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 **Não testado na 2.2:** arrastar com o dedo em iPhone/Android reais (usei mouse e teclado), o zoom de toque duplo no Safari real, teclado virtual.
 
 ### Relatório de testes (versão 2.1)
+
+**Versão 2.3.0 — executado e aprovado** (32/32 unitários e 204/204 de ponta a ponta, também sob a CSP da Vercel).
+
+### Versão 2.3.0
+- Mensagem final sem numeração dos setores (opção "Numerar" continua disponível em Formatação, desligada por padrão).
+- Crédito: "por ENF Rubens Diniz", menor e mais apagado.
+- Início do plantão: uma única caixa de diálogo (Sim/Não); nova proteção impede empilhar diálogos; removido o aviso repetido na tela seguinte.
+- Tela de abertura: prévia atualiza ao digitar; Copiar e WhatsApp fixos na barra inferior; "Começar o preenchimento" vai direto ao painel (sem tela redundante de envio).
+- Finalização: botão e diálogo "Finalizar coleta do ADM", sem escolher responsável, e mensagem simples "Bom plantão".
 
 **Versão 2.1 — executado e aprovado** (28/28 unitários e 156/156 de ponta a ponta, também sob a CSP da Vercel): ocorrências relevantes nos 13 setores; 13 linhas em branco só entre setores; relatório sem enfermeiro/horário; abertura em modo WhatsApp sem asteriscos; crédito e ícone de admin na Home; senha errada recusada / correta aceita / sair tranca; remover, renomear e adicionar pergunta refletidos no formulário e no relatório; persistência ao recarregar; exportar/importar/restaurar a configuração; respostas de perguntas removidas preservadas; 320 px sem rolagem horizontal.
 **Não testado na 2.1:** aparelho real; o fluxo "publicar `form-config.json` na Vercel e abrir em outro aparelho" (testei exportar e importar o arquivo, não a publicação).
@@ -140,7 +150,7 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 - A senha do admin é apenas uma trava (ver acima). Alterações do formulário são por aparelho, a menos que o `form-config.json` seja publicado.
 - Imagem e PDF não incluem alterações digitadas à mão no relatório (usam os dados dos setores).
 
-- Dados ficam **só neste aparelho e navegador** (sem sincronização). O iOS pode limpar dados de sites não instalados após longa inatividade: **instale na Tela de Início e exporte backups periodicamente**.
+- Dados ficam **só neste aparelho e navegador** (sem sincronização): o "último plantão" só é encontrado se tiver sido preenchido **neste mesmo aparelho/navegador** (ou importado por Backup). Para buscar automaticamente o plantão de um colega em outro celular seria preciso um servidor/banco online (não existe nesta versão). O iOS pode limpar dados de sites não instalados após longa inatividade: **instale na Tela de Início e exporte backups periodicamente**.
 - Sem tela de histórico, não há como excluir plantões pela interface (eles ficam guardados em segundo plano).
 - "Continuar do último plantão" usa o plantão mais recente por data/horário, independentemente de quem o preencheu.
 - Duas abas editando o mesmo plantão ao mesmo tempo podem sobrescrever uma à outra (vale a última gravação).

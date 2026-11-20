@@ -189,24 +189,15 @@ function screenHome(shifts) {
     storageBanner(),
   ];
   const startNew = async () => {
-    if (active) {
-      const choice = await dialog({
-        title: 'Já existe um plantão em andamento',
-        body: `${shiftTitle(active)} ainda não foi finalizado. Você pode retomá-lo ou iniciar um novo plantão sem apagar este.`,
-        actions: [
-          { label: 'Cancelar', value: null, variant: 'ghost' },
-          { label: 'Iniciar novo', value: 'new', variant: 'secondary' },
-          { label: 'Retomar', value: 'resume', variant: 'primary' },
-        ],
-      });
-      if (choice === 'resume') { go(`#/p/${active.id}`); return; }
-      if (choice !== 'new') return;
-    }
+    // Uma única pergunta: começar em branco ou a partir do último plantão (de quem quer que tenha preenchido).
+    // Plantão em andamento não gera pergunta: continua acessível em "Retomar" na Home.
     const base = shifts.find((s) => hasAnswers(s));
     if (!base) { go('#/novo'); return; }
     const c = await dialog({
       title: 'Continuar a partir do último plantão?',
-      body: `Copia as informações do plantão ${shiftTitle(base)} para você só confirmar e alterar o que mudou, setor a setor.`,
+      body: h('div', { class: 'stack', style: 'gap:6px' },
+        h('div', null, h('b', null, shiftTitle(base)), h('div', { class: 'meta' }, `${hoursText(base)} · ${joinNames(base.nurses)}${base.status === 'finalizado' ? '' : ' · não finalizado'}`)),
+        h('p', null, 'Copia as informações para você só confirmar e alterar o que mudou, setor a setor.')),
       actions: [
         { label: 'Não, em branco', value: 'blank', variant: 'secondary' },
         { label: 'Sim, continuar', value: 'carry', variant: 'primary' },
@@ -236,7 +227,7 @@ function screenHome(shifts) {
   mount(h('main', { class: 'screen home' }, children));
 }
 
-const credit = () => h('p', { class: 'credit', id: 'credit' }, icon('heart'), 'Desenvolvido por Enfermeiro Rubens Diniz');
+const credit = () => h('p', { class: 'credit', id: 'credit' }, 'por ENF Rubens Diniz');
 
 // ---------- Backup (exportar / importar) ----------
 function openBackupSheet() {
@@ -390,11 +381,11 @@ function screenOpening(shift, shifts, base) {
 
   const msgText = () => openingMessage({ ...form, nurses: form.nurses.map(cleanName).filter(Boolean) });
   const copyBtn = h('button', {
-    class: 'btn secondary', type: 'button', id: 'btn-copy-open',
+    class: 'btn primary', type: 'button', id: 'btn-copy-open',
     onclick: async () => toast((await copyText(msgText())) ? 'Mensagem copiada' : 'Não foi possível copiar. Selecione o texto manualmente.', 'ok'),
   }, icon('copy'), 'Copiar');
   const shareBtn = h('button', {
-    class: 'btn secondary', type: 'button', id: 'btn-wa-open',
+    class: 'btn wa', type: 'button', id: 'btn-wa-open',
     onclick: async () => { const r = await shareWhatsApp(msgText()); if (r === 'fail') toast('Não foi possível abrir o WhatsApp.', 'error'); },
   }, icon('share'), 'WhatsApp');
 
@@ -453,15 +444,14 @@ function screenOpening(shift, shifts, base) {
         toast('Não foi possível salvar o plantão neste dispositivo.', 'error');
         return;
       }
-      go(`#/p/${s.id}/abertura`);
+      go(`#/p/${s.id}`);
     },
-  }, 'Criar plantão');
+  }, 'Começar o preenchimento');
 
   const screen = h('main', { class: 'screen' },
     topbar({ title: isNew ? 'Novo plantão' : 'Dados do plantão', back: isNew ? '#/' : `#/p/${shift.id}`, right: isNew ? null : saveBadge() }),
     h('div', { class: 'content' },
       storageBanner(),
-      base ? h('div', { class: 'banner info', id: 'carry-banner' }, icon('refresh'), h('div', null, h('b', null, 'Continuando do plantão anterior. '), `${shiftTitle(base)}: as informações dos setores virão para você revisar e confirmar.`)) : null,
       h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Tipo de plantão'), typeSeg, errType),
       h('div', { class: 'field' }, h('label', { for: 'f-date' }, 'Data'), dateIn, errDate),
       h('div', { class: 'field' },
@@ -470,12 +460,12 @@ function screenOpening(shift, shifts, base) {
           h('div', { class: 'field' }, h('label', { for: 'f-end' }, 'Término'), endIn)),
         errTime),
       h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Enfermeiros responsáveis'), nurseBox, chipBox, addBtn, errNurses),
-      h('div', { class: 'sectiontitle' }, 'Mensagem de apresentação'),
+      h('div', { class: 'sectiontitle' }, 'Mensagem de apresentação (atualiza sozinha)'),
       preview,
-      h('div', { class: 'row' }, copyBtn, shareBtn),
       isNew ? null : h('p', { class: 'note' }, 'As alterações são salvas automaticamente.')),
-    h('div', { class: 'actionbar' },
-      isNew ? createBtn : h('a', { class: 'btn primary lg', href: `#/p/${shift.id}`, id: 'btn-to-panel' }, 'Ir para o painel')));
+    h('div', { class: 'actionbar cta stack2' },
+      h('div', { class: 'row' }, copyBtn, shareBtn),
+      isNew ? createBtn : h('a', { class: 'btn secondary lg', href: `#/p/${shift.id}`, id: 'btn-to-panel' }, 'Ir para o painel')));
   mount(screen);
   drawNurses();
   update();
@@ -996,29 +986,22 @@ function screenReport(shift) {
   } }, icon('file'), 'Exportar PDF');
 
   const finalize = async () => {
-    const sel = h('select', { class: 'select', id: 'finalize-by', 'aria-label': 'Confirmado por' }, shift.nurses.map((n) => h('option', { value: n }, n)));
-    const body = h('div', { class: 'stack' },
-      alerts.length
-        ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${alerts.length} setor(es) com ocorrência: `), alerts.map((a) => a.title).join(', ')))
-        : h('p', null, 'Nenhuma ocorrência operacional registrada.'),
-      reviewCount ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e ficarão com "-" no relatório.')) : null,
-      totalMissing
-        ? h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${totalMissing} campo(s) não informado(s) `), `em ${miss.length} setor(es). O relatório será finalizado como parcial; esses campos ficam com "-".`))
-        : h('p', null, 'Todos os campos foram informados.'),
-      h('div', { class: 'field' }, h('label', { for: 'finalize-by' }, 'Finalização confirmada por'), sel),
-      h('p', null, 'Depois de finalizar, ainda é possível corrigir os setores e gerar o relatório de novo.'));
+    const warn = [];
+    if (reviewCount) warn.push(h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) aguardam revisão `), 'e ficam com "-" na mensagem.')));
+    if (totalMissing) warn.push(h('div', { class: 'banner warn' }, icon('alert'), h('div', null, h('b', null, `${totalMissing} campo(s) sem informação `), 'ficam com "-" na mensagem.')));
     const ok = await dialog({
-      title: 'Finalizar plantão', body,
-      actions: [{ label: 'Cancelar', value: false, variant: 'ghost' }, { label: 'Finalizar plantão', value: true, variant: 'green' }],
+      title: 'Finalizar coleta do ADM?',
+      body: h('div', { class: 'stack' }, ...warn, h('p', null, 'Você ainda poderá corrigir os setores e gerar a mensagem de novo.')),
+      actions: [{ label: 'Cancelar', value: false, variant: 'ghost' }, { label: 'Finalizar coleta', value: true, variant: 'green' }],
     });
     if (!ok) return;
     shift.status = 'finalizado';
     shift.finalizedAt = nowISO();
-    shift.finalizedBy = sel.value;
-    log(shift, 'finish', `Relatório finalizado${totalMissing || reviewCount ? ' (parcial)' : ''}`, null, sel.value);
+    shift.finalizedBy = shift.nurses[0] || null;
+    log(shift, 'finish', `Coleta do ADM finalizada${totalMissing || reviewCount ? ' (parcial)' : ''}`);
     touch(shift);
     await flush();
-    toast('Plantão finalizado', 'ok');
+    toast('Coleta finalizada. Bom plantão! 💚', 'ok');
     screenReport(shift);
   };
 
@@ -1030,7 +1013,7 @@ function screenReport(shift) {
         ? h('div', { class: 'banner warn', id: 'review-warn' }, icon('alert'), h('div', null, h('b', null, `${reviewCount} setor(es) ainda aguardam revisão `), 'e saem com "-" neste relatório. Abra o painel e confirme cada setor.'))
         : null,
       shift.status === 'finalizado'
-        ? h('div', { class: 'banner warn', id: 'final-banner' }, icon('flag'), h('div', null, `Finalizado em ${dateTimeBR(shift.finalizedAt)}${shift.finalizedBy ? ` · confirmado por ${shift.finalizedBy}` : ''}.`))
+        ? h('div', { class: 'banner warn', id: 'final-banner' }, icon('flag'), h('div', null, `Coleta finalizada em ${dateTimeBR(shift.finalizedAt)}. Bom plantão!`))
         : null,
       miss.length
         ? h('details', { class: 'miss', id: 'missing-box' },
@@ -1046,7 +1029,7 @@ function screenReport(shift) {
       previewEl,
       h('div', { class: 'editfoot' }, restoreBtn, h('span', { class: 'note' }, 'Para alterar a mensagem, toque em Editar texto. Copiar e WhatsApp enviam exatamente o que você vê aqui.')),
       shift.status === 'em_andamento'
-        ? h('button', { class: 'btn green block', type: 'button', id: 'btn-finalize', onclick: finalize }, icon('flag'), 'Finalizar plantão')
+        ? h('button', { class: 'btn green block', type: 'button', id: 'btn-finalize', onclick: finalize }, icon('flag'), 'Finalizar coleta do ADM')
         : null,
       h('details', { class: 'more', id: 'more-formats' },
         h('summary', null, h('span', null, 'Outros formatos (imagem e PDF)'), icon('chevron')),

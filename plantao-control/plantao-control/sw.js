@@ -1,6 +1,6 @@
 // Service worker: guarda os arquivos do aplicativo para abrir sem conexão.
 // Dados do plantão ficam no IndexedDB e não passam pelo service worker.
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const CACHE = `plantao-control-${VERSION}`;
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest',

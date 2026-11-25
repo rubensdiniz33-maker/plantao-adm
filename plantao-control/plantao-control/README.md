@@ -1,4 +1,4 @@
-# PLANTÃO ADM — versão 2.3.0
+# PLANTÃO ADM — versão 2.4.0
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
 **Prioridade de uso:** o objetivo final é **Copiar** o relatório ou **encaminhá-lo ao WhatsApp** — esses são os dois botões principais (fixos no rodapé do relatório). Imagem/PDF são secundários.
@@ -114,6 +114,13 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 **Não testado na 2.2:** arrastar com o dedo em iPhone/Android reais (usei mouse e teclado), o zoom de toque duplo no Safari real, teclado virtual.
 
 ### Relatório de testes (versão 2.1)
+
+**Versão 2.4.0 — executado e aprovado** (32/32 unitários e 206/206 de ponta a ponta, também sob a CSP da Vercel).
+
+### Versão 2.4.0
+- Mensagem final: sem numeração; só o nome do setor (e o título do topo) em negrito; perguntas/tópicos em letra normal. Opções continuam em Formatação.
+- Redefinição automática: a formatação antiga salva no navegador é descartada uma vez (a ordem dos setores é mantida) e textos de relatório editados com títulos numerados voltam ao padrão novo.
+- Atualização: novo cache do service worker (2.4.0) e recarga automática única ao instalar a nova versão. Dados dos plantões não são tocados.
 
 **Versão 2.3.0 — executado e aprovado** (32/32 unitários e 204/204 de ponta a ponta, também sob a CSP da Vercel).
 

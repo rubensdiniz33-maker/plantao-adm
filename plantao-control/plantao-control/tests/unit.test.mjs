@@ -117,8 +117,8 @@ test('relatório contém os 13 setores na ordem e todas as perguntas', () => {
     last = pos;
   });
   // vazio: cada pergunta visível aparece como Não informado
-  assert.ok(text.includes('• *Equipe completa?* -'));
-  assert.ok(text.includes('• *Leitos bloqueados/interditados:* 0'));
+  assert.ok(text.includes('• Equipe completa? -'));
+  assert.ok(text.includes('• Leitos bloqueados/interditados: 0'));
   assert.ok(!/\n\n\n/.test(text), 'no máximo uma linha em branco');
   assert.ok(!/\*\d+\. /.test(text), 'títulos sem numeração');
   // nada de dados fixos do exemplo vazando; relatório NÃO leva enfermeiro nem horário (ficam na apresentação)
@@ -145,7 +145,7 @@ test('todos os setores têm "Ocorrências relevantes" por último e ela é opcio
     assert.ok(last.optional, s.id);
   }
   const t = reportText(baseShift());
-  assert.equal(t.split('*Ocorrências relevantes:*').length - 1, 13);
+  assert.equal(t.split('• Ocorrências relevantes:').length - 1, 13);
 });
 
 test('config do formulário: renomear, remover (com filhos), adicionar e restaurar; respostas antigas preservadas', () => {
@@ -160,7 +160,7 @@ test('config do formulário: renomear, remover (com filhos), adicionar e restaur
   const kept = sanitizeAnswers({ portaria: { ausencia: 'sim', c_abc123: '7' } });
   assert.equal(kept.portaria.ausencia, 'sim', 'resposta de pergunta removida é preservada'); assert.equal(kept.portaria.c_abc123, '7');
   const r = reportText(baseShift({ answers: { portaria: { c_abc123: '7' } } }));
-  assert.ok(r.includes('• *Nova pergunta:* 7') && !r.includes('Ausência no plantão'));
+  assert.ok(r.includes('• Nova pergunta: 7') && !r.includes('Ausência no plantão'));
   applyFormConfig(null);
   assert.deepEqual(por.fields.map((f) => f.id), before, 'restaurar volta ao padrão');
   assert.deepEqual(sanitizeFormConfig({ sectors: 5 }), { version: 1, sectors: {} });
@@ -182,13 +182,13 @@ test('relatório preenchido: respostas, acentos, caracteres especiais e texto lo
     },
   });
   const t = reportText(sh);
-  assert.ok(t.includes('• *Equipe completa?* Sim'));
-  assert.ok(t.includes('◦ *Detalhamento da ausência:* Técnica "João" faltou — cobertura & plantão extra: 50% às 22h'));
-  assert.ok(t.includes('• *Observações:*\n      linha 1\n      linha 2'));
+  assert.ok(t.includes('• Equipe completa? Sim'));
+  assert.ok(t.includes('◦ Detalhamento da ausência: Técnica "João" faltou — cobertura & plantão extra: 50% às 22h'));
+  assert.ok(t.includes('• Observações:\n      linha 1\n      linha 2'));
   assert.ok(t.includes('Noradrenalina, Amiodarona'));
   assert.ok(t.includes(long));
-  assert.ok(t.includes('• *Leitos disponíveis:* 0'));
-  assert.ok(t.includes('◦ *Motivo:* Manutenção do ar-condicionado'));
+  assert.ok(t.includes('• Leitos disponíveis: 0'));
+  assert.ok(t.includes('◦ Motivo: Manutenção do ar-condicionado'));
   // todo marcador de negrito está balanceado em cada linha
   for (const line of t.split('\n')) assert.equal((line.match(/\*/g) || []).length % 2, 0, line);
   // URL do WhatsApp preserva acentos e símbolos
@@ -282,14 +282,14 @@ test('setor copiado do plantão anterior: estado "revisar", fora do relatório a
   assert.equal(sum.done, 0);
   assert.equal(sum.alerts, 0, 'ocorrência antiga não conta até confirmar');
   const t = reportText(sh);
-  assert.ok(t.includes('• *Equipe completa?* -'), 'dado não confirmado não vai para o relatório');
+  assert.ok(t.includes('• Equipe completa? -'), 'dado não confirmado não vai para o relatório');
   assert.ok(missingList(sh).find((m) => m.id === 'portaria').labels[0].includes('Aguardando revisão'));
   // confirmado: passa a valer
   const ok = baseShift({ answers, sectorMeta: { portaria: { firstAt: null, doneAt: null, carried: false } } });
   assert.equal(sectorStatus(ok, por), 'done');
   assert.equal(shiftSummary(ok).done, 1);
   assert.equal(shiftSummary(ok).alerts, 1);
-  assert.ok(reportText(ok).includes('• *Equipe completa?* Não'));
+  assert.ok(reportText(ok).includes('• Equipe completa? Não'));
 });
 
 test('próximo setor pendente: pula preenchidos, dá a volta e retorna null quando tudo pronto', () => {
@@ -319,7 +319,7 @@ test('backup preserva setores a revisar e a origem do plantão', () => {
 test('campo vazio sai como traço e nunca como "Não informado"', () => {
   const t = reportText(baseShift());
   assert.ok(!/não informado/i.test(t), 'sem a expressão "Não informado"');
-  assert.ok(/• \*Equipe completa\?\* -(\n|$)/.test(t));
+  assert.ok(/• Equipe completa\? -(\n|$)/.test(t));
   assert.ok(!t.includes('_'), 'sem itálico residual');
 });
 
@@ -346,7 +346,7 @@ test('reportEdit sobrevive a normalização e backup; edição vazia é descarta
 test('N/A em número também sai como "-" (não 0)', () => {
   const sh = baseShift({ answers: { enf_sus: { leitos: NA } } });
   const t = reportText(sh);
-  assert.ok(t.includes('• *Leitos disponíveis:* -') && t.includes('• *Pacientes em diálise:* 0'));
+  assert.ok(t.includes('• Leitos disponíveis: -') && t.includes('• Pacientes em diálise: 0'));
 });
 
 test('PA: vários médicos (lista de nomes) — uma por linha no dado, vírgulas no relatório', () => {
@@ -355,7 +355,7 @@ test('PA: vários médicos (lista de nomes) — uma por linha no dado, vírgulas
   const a = sanitizeAnswers({ pa: { medico: ' Dr. A \n\n Dra. B \n' + 'x'.repeat(300) } });
   assert.equal(a.pa.medico.split('\n').length, 3); assert.equal(a.pa.medico.split('\n')[0], 'Dr. A'); assert.equal(a.pa.medico.split('\n')[2].length, 120);
   const t = reportText(baseShift({ answers: { pa: { medico: 'Dr. A\nDra. B' } } }));
-  assert.ok(t.includes('• *Médico de plantão:* Dr. A, Dra. B'));
+  assert.ok(t.includes('• Médico de plantão: Dr. A, Dra. B'));
   assert.equal(sanitizeAnswers({ pa: { medico: ' \n ' } }).pa?.medico, undefined);
 });
 
@@ -368,8 +368,8 @@ test('formatação personalizada: padrão = modelo atual; opções mudam só a a
   assert.equal(lines[1], 'Portaria/Acolhimento');
   assert.equal(lines[2], '- Equipe completa? Sim');
   assert.ok(!t.includes('*') && !t.includes('\n\n') && !t.includes('Data:'));
-  assert.ok(reportText(sh, { bullet: '' }).includes('\nEquipe completa? Sim') === false); // negrito ainda ligado
-  assert.ok(reportText(sh, { bullet: '' }).includes('\n*Equipe completa?* Sim'));
+  assert.ok(reportText(sh, { bullet: '', boldQuestions: true }).includes('\n*Equipe completa?* Sim'));
+  assert.ok(reportText(sh).includes('\n*Portaria') === false && reportText(sh).includes('\n*PORTARIA/ACOLHIMENTO*\n• Equipe completa? Sim')); // padrão: só o setor em negrito
   // ordem dos setores NUNCA muda com a formatação
   const idx = SECTORS.map((x) => t.indexOf(x.title));
   assert.deepEqual(idx, [...idx].sort((a, b) => a - b));

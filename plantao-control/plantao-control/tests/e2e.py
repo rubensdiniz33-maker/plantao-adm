@@ -220,7 +220,7 @@ def main():
         pg.screenshot(path=f'{SHOTS}/12-relatorio.png')
         check('Relatório: linha em branco só ENTRE setores (13), nunca dentro do setor', report.count('\n\n') == 13 and '\n\n\n' not in report and all(report.split('\n\n')[i + 1].startswith(f'*{TITLES[i].upper()}*') for i in range(13)), repr(report[:140]))
         check('Relatório: sem enfermeiro nem horário (já estão na apresentação)', 'Enf:' not in report and 'Horário' not in report and 'Rubens' not in report and 'Alana' not in report)
-        check('Relatório: "Ocorrências relevantes" em todos os 13 setores', report.count('*Ocorrências relevantes:*') + report.count('*Ocorrências relevantes*') == 13, str(report.count('Ocorrências relevantes')))
+        check('Relatório: "Ocorrências relevantes" em todos os 13 setores', report.count('• Ocorrências relevantes:') == 13, str(report.count('Ocorrências relevantes')))
         pos = [report.find(f'*{t.upper()}*') for i, t in enumerate(TITLES)]
         check('Relatório: 13 setores em ordem', all(x >= 0 for x in pos) and pos == sorted(pos), str(pos))
         faltando = [m for m in ['Equipe completa?','Ausência no plantão?','Cobertura realizada?','Pendências administrativas relevantes','Reclamações registradas','Medicamentos críticos em falta?','Enxoval suficiente para o plantão?','Quantidade estimada disponível','Necessidade de reposição urgente?','Exames indispensáveis?','Equipamentos com falha?','Médico de sobreaviso','Previsão de exames a serem realizados','Intercorrências','Procedimentos realizados','Procedimentos suspensos','Atrasos','Autoclave em funcionamento','Leitos disponíveis','Altas do dia ainda não efetuadas','Pacientes aguardando transferência','Pacientes em diálise','Leitos bloqueados/interditados','Médico de plantão (FDS)','Enfermeiro(a) de plantão','Quantidade de pacientes em observação','Quantidade de pacientes aguardando atendimento','Quantidade de pacientes em boarding','Maior tempo de boarding no PA','Ocorrências relevantes'] if m not in report]
@@ -240,11 +240,11 @@ def main():
         # prévia formatada
         fm = fmttext(pg)
         bold = pg.eval_on_selector_all('#report-preview strong', 'els => els.map(e => e.textContent)')
-        check('Prévia WhatsApp: perguntas em negrito', 'Equipe completa?' in bold and 'Leitos disponíveis:' in bold and 'PORTARIA/ACOLHIMENTO' in bold and '1. PORTARIA/ACOLHIMENTO' not in bold and 'Enf:' not in bold, str(bold[:8]))
+        check('Prévia WhatsApp: só o nome do setor em negrito (perguntas em letra normal)', 'Equipe completa?' not in bold and 'Leitos disponíveis:' not in bold and 'PORTARIA/ACOLHIMENTO' in bold and '1. PORTARIA/ACOLHIMENTO' not in bold and 'Enf:' not in bold, str(bold[:8]))
         pg.click('#tab-edit')
         pg.click('#btn-copy-report')
         clip = pg.evaluate('navigator.clipboard.readText()')
-        check('Copiar: texto WhatsApp com negrito e parágrafo entre setores', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\n*Data:* 13/11/2026\n\n*PORTARIA/ACOLHIMENTO*\n• *Equipe completa?* Sim') and '\n\n\n' not in clip and '*PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
+        check('Copiar: texto WhatsApp com negrito só nos títulos e parágrafo entre setores', clip.startswith('*PLANTÃO ADMINISTRATIVO — NOTURNO*\nData: 13/11/2026\n\n*PORTARIA/ACOLHIMENTO*\n• Equipe completa? Sim') and '\n\n\n' not in clip and '*PRONTO ATENDIMENTO*' in clip, repr(clip[:200]))
         check('Copiar: asteriscos balanceados em todas as linhas', all(l.count('*') % 2 == 0 for l in clip.split('\n')))
         pg.click('#tab-fmt')
         pg.evaluate("() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('report-preview')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }")
@@ -534,7 +534,7 @@ def main():
         pg.goto(BASE + '/#/'); pg.click('#btn-resume'); pg.wait_for_selector('#sec-portaria')
         pg.goto(pg.url.split('#/')[0] + '#/' + '/'.join(pg.url.split('#/')[1].split('/')[:2]) + '/relatorio'); pg.wait_for_selector('#report-preview')
         rt = rawtext(pg)
-        check('Relatório usa o formulário editado', '• *Equipe 100% completa?* Sim' in rt and 'Cobertura realizada' not in rt and '• *Quantidade de macas disponíveis:* 5' in rt and '• *Ocorrências relevantes:* Elevador em manutenção' in rt, rt[:300])
+        check('Relatório usa o formulário editado', '• Equipe 100% completa? Sim' in rt and 'Cobertura realizada' not in rt and '• Quantidade de macas disponíveis: 5' in rt and '• Ocorrências relevantes: Elevador em manutenção' in rt, rt[:300])
         # persistência após recarregar
         pg.reload(); pg.wait_for_selector('#report-preview')
         check('Edição do formulário persiste ao recarregar', 'Quantidade de macas disponíveis' in rawtext(pg))
@@ -653,18 +653,31 @@ def main():
         pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#btn-format'); pg.click('#btn-format'); pg.wait_for_selector('#fmt-sheet')
         pg.click('#fmt-sheet [data-fmt="boldQuestions"]'); pg.click('#fmt-sheet [data-bullet="-"]'); pg.click('#fmt-sheet [data-fmt="blankBetween"]'); pg.wait_for_timeout(300)
         fr_ = rawtext(pg)
-        check('Formatação: sem negrito nas perguntas, marcador "-" e sem linha em branco', '- Equipe completa?' in fr_ and '*Equipe completa?*' not in fr_ and '\n\n' not in fr_ and '*PORTARIA/ACOLHIMENTO*' in fr_, repr(fr_[:160]))
+        check('Formatação: perguntas em negrito (opcional), marcador "-" e sem linha em branco', '- *Equipe completa?*' in fr_ and '\n\n' not in fr_ and '*PORTARIA/ACOLHIMENTO*' in fr_, repr(fr_[:160]))
         check('Formatação: prévia atualizada ao vivo e conteúdo/ordem iguais', 'Equipe completa?' in pg.evaluate("document.getElementById('report-preview').innerText") and fr_.replace('- ', '• ').count('\n') < orig_report.count('\n'))
         pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
         pg.click('#btn-copy-report'); clipf = pg.evaluate('navigator.clipboard.readText()')
         check('Copiar usa a formatação escolhida', clipf == fr_)
         pg.reload(); pg.wait_for_selector('#report-text', state='attached')
-        check('Formatação fica salva no navegador (recarregar)', '- Equipe completa?' in rawtext(pg))
+        check('Formatação fica salva no navegador (recarregar)', '- *Equipe completa?*' in rawtext(pg))
         pg.goto(base_url); pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#btn-format'); pg.click('#btn-format'); pg.wait_for_selector('#fmt-sheet')
-        check('Controles refletem a preferência salva', pg.is_checked('#fmt-sheet [data-fmt="boldQuestions"]') is False and pg.get_attribute('#fmt-sheet [data-bullet="-"]', 'aria-pressed') == 'true')
+        check('Controles refletem a preferência salva', pg.is_checked('#fmt-sheet [data-fmt="boldQuestions"]') is True and pg.get_attribute('#fmt-sheet [data-bullet="-"]', 'aria-pressed') == 'true')
         pg.click('#fmt-reset'); pg.wait_for_timeout(300); pg.click('.sheethead .iconbtn'); pg.wait_for_timeout(250)
         check('Restaurar formatação padrão volta ao modelo WhatsApp', rawtext(pg) == orig_report)
         pg.screenshot(path=f'{SHOTS}/51-relatorio-formato.png')
+
+        # ---- navegador com formatação/prévia ANTIGAS salvas: devem ser redefinidas
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        pg.evaluate("""() => {
+          localStorage.setItem('plantao-adm:prefs', JSON.stringify({ order: ['recepcao'], format: { bullet: '•', boldQuestions: true, boldTitles: true, upperTitles: true, numberTitles: true, blankBetween: true, showDate: true } }));
+          localStorage.removeItem('plantao-adm:preview-v3');
+        }""")
+        pg.reload(); pg.wait_for_selector('#report-text', state='attached'); pg.wait_for_timeout(300)
+        old_rt = rawtext(pg)
+        check('Formatação antiga salva no navegador é redefinida: sem numeração e perguntas em letra normal', '*PORTARIA/ACOLHIMENTO*' in old_rt and '1. ' not in old_rt.split('\n\n')[1].split('\n')[0] and '*Equipe completa?*' not in old_rt, repr(old_rt[:140]))
+        saved = pg.evaluate("JSON.parse(localStorage.getItem('plantao-adm:prefs'))")
+        check('Preferência antiga descartada (versão nova gravada) e ordem de navegação mantida', 'format' not in saved and saved.get('formatVersion') and saved.get('order') == ['recepcao'], str(saved))
+        pg.evaluate("() => localStorage.removeItem('plantao-adm:prefs')"); pg.reload(); pg.wait_for_selector('#report-text', state='attached')
 
         # ---- persistência: iniciar do zero x iniciar a partir do anterior
         A = {'portaria': dict(equipe_completa='sim', ausencia='nao', cobertura='sim'), 'rouparia': dict(enxoval_suficiente='sim', quantidade='42', reposicao_urgente='nao')}

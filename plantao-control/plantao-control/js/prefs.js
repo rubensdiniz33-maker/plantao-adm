@@ -1,16 +1,27 @@
 // Preferências do usuário neste navegador (localStorage): ordem de navegação dos setores e formatação do relatório.
 // A ordem do RELATÓRIO final nunca muda: a preferência vale só para a navegação (painel, seletor, Próximo/Anterior).
 import { SECTORS } from './sectors.js';
-import { normalizeFormat } from './report.js';
+import { normalizeFormat, FORMAT_VERSION } from './report.js';
 
 const KEY = 'plantao-adm:prefs';
 let mem = {}; // se o localStorage falhar, a preferência vale ao menos na sessão
 
 function read() {
-  try { const t = localStorage.getItem(KEY); if (t) { const p = JSON.parse(t); if (p && typeof p === 'object') { mem = p; return p; } } } catch { /* usa memória */ }
+  try {
+    const t = localStorage.getItem(KEY);
+    if (t) {
+      const p = JSON.parse(t);
+      if (p && typeof p === 'object') {
+        // Padrão de formatação mudou: descarta a formatação antiga salva (a ordem dos setores é mantida).
+        if (p.formatVersion !== FORMAT_VERSION) { delete p.format; p.formatVersion = FORMAT_VERSION; try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ok */ } }
+        mem = p; return p;
+      }
+    }
+  } catch { /* usa memória */ }
   return mem;
 }
 function write(p) {
+  p = { ...p, formatVersion: FORMAT_VERSION };
   mem = p;
   try { localStorage.setItem(KEY, JSON.stringify(p)); return true; } catch { return false; }
 }

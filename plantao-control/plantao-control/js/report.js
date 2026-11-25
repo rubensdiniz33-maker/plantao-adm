@@ -83,8 +83,9 @@ export function reportHeader(shift) {
 
 // ---------- Formatação personalizável (preferência do usuário; padrão = modelo WhatsApp atual) ----------
 export const BULLETS = [['•', '•'], ['-', '-'], ['▪', '▪'], ['➤', '➤'], ['', 'Nenhum']];
+export const FORMAT_VERSION = 3; // sobe quando o padrão muda: preferências antigas salvas no navegador são descartadas uma vez
 export const DEFAULT_FORMAT = Object.freeze({
-  bullet: '•', boldQuestions: true, boldTitles: true, upperTitles: true, numberTitles: false, blankBetween: true, showDate: true,
+  bullet: '•', boldQuestions: false, boldTitles: true, upperTitles: true, numberTitles: false, blankBetween: true, showDate: true,
 });
 export function normalizeFormat(raw) {
   const f = { ...DEFAULT_FORMAT };
@@ -102,7 +103,7 @@ export function reportText(shift, fmtRaw = DEFAULT_FORMAT) {
   const bold = (t, on) => (on ? `*${t}*` : t);
   const h = reportHeader(shift);
   const lines = [bold(h.title, fmt.boldTitles)];
-  if (fmt.showDate) lines.push(`${bold('Data:', fmt.boldTitles)} ${h.date}`);
+  if (fmt.showDate) lines.push(`${bold('Data:', fmt.boldQuestions)} ${h.date}`);
   const child = fmt.bullet ? '◦ ' : '';
   const top = fmt.bullet ? `${fmt.bullet} ` : '';
   for (const sec of reportModel(shift)) {

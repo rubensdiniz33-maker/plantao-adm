@@ -1224,13 +1224,32 @@ window.addEventListener('hashchange', route);
 window.addEventListener('error', () => toast('Ocorreu um erro inesperado.', 'error'));
 window.addEventListener('unhandledrejection', () => toast('Ocorreu um erro inesperado.', 'error'));
 
+// Uma vez por versão: textos de relatório editados/salvos com o modelo antigo (títulos numerados) voltam a ser gerados no padrão novo.
+async function migrateSavedPreviews() {
+  const FLAG = 'plantao-adm:preview-v3';
+  try { if (localStorage.getItem(FLAG)) return; } catch { return; }
+  try {
+    const all = await storage.listShifts();
+    const old = all.filter((s) => s.reportEdit && typeof s.reportEdit.text === 'string' && /^\*?\d{1,2}\. [A-ZÀ-Ú]/m.test(s.reportEdit.text));
+    for (const s of old) s.reportEdit = null;
+    if (old.length) await storage.saveMany(old);
+    localStorage.setItem(FLAG, '1');
+  } catch { /* tenta de novo na próxima abertura */ }
+}
+
 (async function start() {
   await formcfg.loadFormConfig();
   const st = await storage.init();
   if (!st.persistent) setSave('volatile');
   else await recoverJournal();
+  await migrateSavedPreviews();
   await route();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* funciona sem service worker */ });
+    // Nova versão do app: recarrega uma única vez para aplicar os arquivos novos (sem perder dados do plantão).
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      try { if (sessionStorage.getItem('plantao-adm:reloaded') === '1') return; sessionStorage.setItem('plantao-adm:reloaded', '1'); } catch { return; }
+      persistNow(); location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => { /* funciona sem service worker */ });
   }
 })();

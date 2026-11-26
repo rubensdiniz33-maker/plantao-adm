@@ -666,6 +666,13 @@ def main():
         check('Restaurar formatação padrão volta ao modelo WhatsApp', rawtext(pg) == orig_report)
         pg.screenshot(path=f'{SHOTS}/51-relatorio-formato.png')
 
+        # ---- rolagem estável: barras fixas sem camada extra, altura estável (svh), topo fixo ao rolar
+        pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
+        pg.evaluate('window.scrollTo(0, document.body.scrollHeight)'); pg.wait_for_timeout(100)
+        pg.evaluate('window.scrollTo(0, 200)'); pg.wait_for_timeout(100)
+        rs = pg.evaluate("() => ({ tb: getComputedStyle(document.querySelector('.topbar')).transform, bodyOv: getComputedStyle(document.body).overflowX, top: Math.round(document.querySelector('.topbar').getBoundingClientRect().top) })")
+        check('Rolagem estável: barra do topo fixa em 0, sem transform e body sem overflow-x', rs['top'] == 0 and rs['tb'] == 'none' and rs['bodyOv'] == 'visible', str(rs))
+
         # ---- navegador com formatação/prévia ANTIGAS salvas: devem ser redefinidas
         pg.goto(base_url + '/relatorio'); pg.wait_for_selector('#report-text', state='attached')
         pg.evaluate("""() => {
@@ -712,6 +719,60 @@ def main():
         check('Sem erros de console na sessão F', not errs5, str(errs5[:3]))
         c5.close()
 
+        # ---- G: sincronização com a nuvem (Supabase simulado em memória; nada sai da máquina)
+        import json as _json
+        CODE = 'HC-TESTE123'; store = {}; calls = {'push': 0}
+        def fake_supabase(route):
+            req = route.request
+            hdr = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST,OPTIONS'}
+            if req.method == 'OPTIONS':
+                return route.fulfill(status=204, headers=hdr)
+            fn = req.url.rsplit('/', 1)[-1]; body = _json.loads(req.post_data or '{}')
+            if body.get('p_code') != CODE:
+                return route.fulfill(status=400, headers=hdr, content_type='application/json', body=_json.dumps({'message': 'codigo_invalido'}))
+            if fn == 'plantao_check': out = 'Hospital Teste'
+            elif fn == 'plantao_push':
+                sh = body['p_shift']; calls['push'] += 1
+                if sh['id'] not in store or store[sh['id']]['updatedAt'] < sh['updatedAt']: store[sh['id']] = sh
+                out = True
+            elif fn == 'plantao_recent': out = sorted(store.values(), key=lambda x: x['updatedAt'], reverse=True)
+            else: out = None
+            route.fulfill(status=200, headers=hdr, content_type='application/json', body=_json.dumps(out))
+        def dev(name):
+            c = b.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True, locale='pt-BR')
+            c.route('**/*.supabase.co/**', fake_supabase)
+            q = c.new_page(); q.errs = []
+            q.on('pageerror', lambda e: q.errs.append(str(e))); q.on('console', lambda m: q.errs.append(m.text) if m.type == 'error' and 'Failed to load resource' not in m.text else None)
+            return c, q
+        cA, pa_ = dev('A')
+        pa_.goto(BASE + '/'); pa_.wait_for_selector('#btn-start'); pa_.click('#btn-backup'); pa_.wait_for_selector('#cloud-code')
+        check('Nuvem: campo de código aparece em Backup e sincronização', pa_.locator('#btn-cloud-on').is_visible())
+        pa_.fill('#cloud-code', 'HC-ERRADO99'); pa_.click('#btn-cloud-on'); pa_.wait_for_selector('#cloud-msg:not([hidden])')
+        check('Nuvem: código errado é recusado com mensagem clara', 'não reconhecido' in pa_.inner_text('#cloud-msg') and pa_.locator('#cloud-status').count() == 0)
+        pa_.fill('#cloud-code', 'hc-teste123'); pa_.click('#btn-cloud-on'); pa_.wait_for_selector('#cloud-status')
+        check('Nuvem: código correto liga a sincronização (aceita minúsculas)', 'Sincronização ligada' in pa_.inner_text('#cloud-status'))
+        pa_.goto(BASE + '/'); pa_.wait_for_selector('#btn-start')
+        create_shift(pa_, 'Aparelho A')
+        fill_sector(pa_, 'rouparia', dict(enxoval_suficiente='sim', quantidade='33', reposicao_urgente='nao'))
+        pa_.wait_for_timeout(800)
+        check('Nuvem: plantão é enviado em segundo plano ao preencher', calls['push'] >= 1 and any(v['answers'].get('rouparia', {}).get('quantidade') == '33' for v in store.values()), str(calls))
+        cB, pb_ = dev('B')
+        pb_.goto(BASE + '/'); pb_.wait_for_selector('#btn-start'); pb_.click('#btn-backup'); pb_.wait_for_selector('#cloud-code')
+        pb_.fill('#cloud-code', CODE); pb_.click('#btn-cloud-on'); pb_.wait_for_selector('#cloud-status'); pb_.goto(BASE + '/'); pb_.wait_for_selector('#btn-start')
+        pb_.click('#btn-start'); pb_.wait_for_selector('.dlg')
+        check('Nuvem: OUTRO aparelho (vazio) oferece continuar do último plantão do aparelho A', 'Aparelho A' in pb_.inner_text('.dlg') and pb_.locator('.dlg').count() == 1)
+        pb_.click('.dlg .btn:has-text("Sim, continuar")'); pb_.wait_for_selector('#btn-create')
+        pb_.fill('[data-nurse]', 'Aparelho B'); pb_.click('#btn-create'); pb_.wait_for_selector('#sec-rouparia')
+        pb_.click('#sec-rouparia'); pb_.wait_for_selector('[data-field="quantidade"]')
+        check('Nuvem: dados do plantão do aparelho A chegam copiados para revisão no aparelho B', pb_.input_value('[data-field="quantidade"] input') == '33')
+        pb_.goto(BASE + '/'); pb_.wait_for_selector('#btn-start')
+        check('Nuvem: plantão buscado só como base não aparece como "Retomar" no aparelho B (só o novo)', pb_.locator('#btn-resume').count() == 1 and 'Aparelho A' not in pb_.inner_text('#btn-resume'))
+        # offline: sem internet ainda inicia plantão com dados locais
+        cB.set_offline(True); pb_.click('#btn-start'); pb_.wait_for_selector('.dlg, #btn-create', timeout=15000)
+        check('Nuvem: sem internet o app continua funcionando com dados locais', pb_.locator('.dlg').count() == 1)
+        cB.set_offline(False)
+        check('Nuvem: sem erros de console', not pa_.errs and not pb_.errs, str((pa_.errs + pb_.errs)[:3]))
+        cA.close(); cB.close()
 
         b.close()
 

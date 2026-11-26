@@ -2,6 +2,7 @@
 import * as storage from './storage.js';
 import * as formcfg from './formconfig.js';
 import * as prefs from './prefs.js';
+import * as cloud from './cloud.js';
 import {
   SECTORS, SECTOR_BY_ID, defaultFields, NA, MAX_TEXT, MAX_NUM_DIGITS, conditionMet, isAnswered, splitNames, sectorProgress, sectorAlerts,
   sectorStatus, effectiveAnswers, nextAttention, shiftSummary,
@@ -105,6 +106,7 @@ function flush() {
     try {
       const r = await storage.saveShift(s);
       if (r.persisted) journalClear(s);
+      cloud.push(s); // sincroniza em segundo plano (sem bloquear nem falhar o salvamento local)
       if (save.pending) return; // há alteração mais nova a caminho
       setSave(r.persisted ? 'saved' : 'volatile');
     } catch (e) {
@@ -191,7 +193,18 @@ function screenHome(shifts) {
   const startNew = async () => {
     // Uma única pergunta: começar em branco ou a partir do último plantão (de quem quer que tenha preenchido).
     // Plantão em andamento não gera pergunta: continua acessível em "Retomar" na Home.
-    const base = shifts.find((s) => hasAnswers(s));
+    const btn = document.getElementById('btn-start');
+    let pool = shifts;
+    if (cloud.enabled()) {
+      // Busca também o último plantão preenchido em qualquer aparelho (rápido; sem internet, usa só o local).
+      if (btn) { btn.disabled = true; btn.lastChild.textContent = 'Buscando último plantão…'; }
+      const remote = await cloud.recent(20);
+      if (btn) { btn.disabled = false; btn.lastChild.textContent = 'INICIAR PLANTÃO'; }
+      const seen = new Map(shifts.map((x) => [x.id, x]));
+      for (const r of remote) if (!seen.has(r.id) || r.updatedAt > seen.get(r.id).updatedAt) seen.set(r.id, r);
+      pool = [...seen.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+    const base = pool.find((s) => hasAnswers(s));
     if (!base) { go('#/novo'); return; }
     const c = await dialog({
       title: 'Continuar a partir do último plantão?',
@@ -230,6 +243,48 @@ function screenHome(shifts) {
 const credit = () => h('p', { class: 'credit', id: 'credit' }, 'por ENF Rubens Diniz');
 
 // ---------- Backup (exportar / importar) ----------
+function cloudBox() {
+  const box = h('div', { class: 'stack', id: 'cloud-box', style: 'gap:8px' });
+  const draw = () => {
+    box.replaceChildren();
+    if (!cloud.available()) return;
+    if (cloud.enabled()) {
+      box.append(
+        h('div', { class: 'banner ok', id: 'cloud-status' }, icon('check'), h('div', null, h('b', null, 'Sincronização ligada. '), 'Os plantões são enviados sozinhos e o "último plantão" vale para todos os aparelhos com o mesmo código.')),
+        h('button', { class: 'btn secondary', type: 'button', id: 'btn-cloud-off', onclick: async () => {
+          const ok = await confirmDialog({ title: 'Desligar sincronização?', message: 'Este aparelho deixa de enviar e buscar plantões. Os dados já salvos aqui e na nuvem continuam.', confirmText: 'Desligar' });
+          if (ok) { cloud.clearCode(); draw(); }
+        } }, 'Desligar sincronização'));
+      return;
+    }
+    const msg = h('div', { class: 'error', id: 'cloud-msg', hidden: true });
+    const input = h('input', { type: 'text', id: 'cloud-code', placeholder: 'Código do hospital (ex.: HC-XXXXXXXX)', autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false', maxlength: '24' });
+    const btn = h('button', { class: 'btn primary', type: 'button', id: 'btn-cloud-on', onclick: async () => {
+      const code = input.value.trim().toUpperCase();
+      msg.hidden = true;
+      if (code.length < 6) { msg.textContent = 'Digite o código completo.'; msg.hidden = false; return; }
+      btn.disabled = true;
+      try {
+        await cloud.check(code);
+        cloud.setCode(code);
+        toast('Sincronização ligada', 'ok');
+        draw();
+        const all = await storage.listShifts();
+        for (const s of all.slice(0, 30)) cloud.push(s);
+      } catch (e) {
+        msg.textContent = e.code === 'bad_code' ? 'Código não reconhecido. Confira com a coordenação.' : 'Sem conexão com a internet. Tente de novo.';
+        msg.hidden = false;
+        btn.disabled = false;
+      }
+    } }, 'Ligar sincronização');
+    box.append(
+      h('div', { class: 'meta' }, h('b', null, 'Sincronizar entre aparelhos'), ' — digite o código do hospital uma vez neste aparelho.'),
+      input, msg, btn);
+  };
+  draw();
+  return box;
+}
+
 function openBackupSheet() {
   let sh;
   const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, id: 'import-file', onchange: async (e) => {
@@ -262,7 +317,8 @@ function openBackupSheet() {
     }
   } });
   const body = h('div', { class: 'stack' },
-    h('p', { class: 'note' }, 'Guarde uma cópia dos plantões ou leve-os para outro aparelho. Os dados ficam só neste dispositivo e navegador; não há sincronização.'),
+    cloudBox(),
+    h('p', { class: 'note' }, 'Backup manual: guarde uma cópia dos plantões em arquivo. Os dados também ficam salvos neste aparelho, mesmo sem internet.'),
     h('div', { class: 'row' },
       h('button', { class: 'btn secondary', type: 'button', id: 'btn-export-backup', onclick: async () => {
         try {
@@ -274,7 +330,7 @@ function openBackupSheet() {
       } }, icon('download'), 'Exportar'),
       h('button', { class: 'btn secondary', type: 'button', id: 'btn-import-backup', onclick: () => fileIn.click() }, icon('upload'), 'Importar'),
       fileIn));
-  sh = sheet({ title: 'Backup dos dados', body });
+  sh = sheet({ title: 'Backup e sincronização', body });
 }
 
 // =====================================================================
@@ -1196,7 +1252,7 @@ async function route() {
     if (parts[0] === 'admin') return screenAdminRoute(parts[1]);
     if (parts[0] === 'novo') {
       const all = await storage.listShifts();
-      return screenOpening(null, all, parts[1] ? all.find((x) => x.id === parts[1]) : undefined);
+      return screenOpening(null, all, parts[1] ? (all.find((x) => x.id === parts[1]) || cloud.cached(parts[1])) : undefined);
     }
     if (parts[0] === 'p' && parts[1]) {
       const shift = await storage.getShift(parts[1]);
@@ -1243,10 +1299,14 @@ async function migrateSavedPreviews() {
   if (!st.persistent) setSave('volatile');
   else await recoverJournal();
   await migrateSavedPreviews();
+  const retry = () => cloud.flushPending((id) => storage.getShift(id));
+  retry(); window.addEventListener('online', retry);
   await route();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     // Nova versão do app: recarrega uma única vez para aplicar os arquivos novos (sem perder dados do plantão).
+    const hadController = !!navigator.serviceWorker.controller; // primeira instalação não precisa recarregar
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
       try { if (sessionStorage.getItem('plantao-adm:reloaded') === '1') return; sessionStorage.setItem('plantao-adm:reloaded', '1'); } catch { return; }
       persistNow(); location.reload();
     });

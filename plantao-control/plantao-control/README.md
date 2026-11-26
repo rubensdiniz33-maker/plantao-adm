@@ -1,4 +1,4 @@
-# PLANTÃO ADM — versão 2.4.0
+# PLANTÃO ADM — versão 2.5.0
 
 Gerenciador de plantão administrativo hospitalar, mobile-first (PWA), sem backend, sem login e sem serviços externos.
 **Prioridade de uso:** o objetivo final é **Copiar** o relatório ou **encaminhá-lo ao WhatsApp** — esses são os dois botões principais (fixos no rodapé do relatório). Imagem/PDF são secundários.
@@ -114,6 +114,17 @@ BASE_URL=http://localhost:5174 python3 tests/e2e.py
 **Não testado na 2.2:** arrastar com o dedo em iPhone/Android reais (usei mouse e teclado), o zoom de toque duplo no Safari real, teclado virtual.
 
 ### Relatório de testes (versão 2.1)
+
+**Versão 2.5.0 — executado e aprovado** (32/32 unitários e 216/216 de ponta a ponta, também sob a CSP; a nuvem foi testada com um Supabase SIMULADO no navegador, e as funções reais do banco foram testadas por SQL com o papel `anon`).
+
+### Versão 2.5.0 — Supabase e Vercel
+- Supabase (projeto `plantao-adm`, São Paulo): tabelas `workspaces` e `shifts` sem acesso direto (RLS + sem permissões); acesso só pelas funções `plantao_check/push/recent`, que exigem o **código do hospital** (guardado como hash). Esquema em `supabase/schema.sql`.
+- App: continua offline-first. Salva no aparelho e envia em segundo plano; falhou → fila e reenvio ao abrir/voltar a internet. Em **Backup e sincronização** (Home) o enfermeiro digita o código uma vez.
+- "Iniciar plantão" busca também o último plantão preenchido em qualquer aparelho; sem internet usa o local.
+- Deploy na Vercel: projeto estático, sem build (Framework: Other; Output directory: raiz). `vercel.json` já traz cabeçalhos e CSP com o domínio do Supabase. Se trocar o projeto Supabase, edite `js/config.js` e o `connect-src` do `vercel.json`.
+- Limites: não foi testado contra o Supabase real a partir do navegador (a rede do ambiente de teste não alcança o domínio), nem em celular/WhatsApp reais. O código é um segredo compartilhado (sem login individual): quem tiver o código lê e grava; trocar o código no banco cortaria os aparelhos antigos.
+
+**Versão 2.4.1 — executado e aprovado** (32/32 unitários e 207/207 de ponta a ponta, também sob a CSP). Correção: "tremor" ao rolar a tela para cima. Altura das telas passou de 100dvh (muda com a barra do navegador) para 100svh (estável); removidos o `transform` das barras fixas e o `overflow-x` do body; animação de entrada só com opacidade; recarga automática só em atualização (não na primeira instalação). **Não foi possível reproduzir/verificar em iPhone real**: confirmar no aparelho.
 
 **Versão 2.4.0 — executado e aprovado** (32/32 unitários e 206/206 de ponta a ponta, também sob a CSP da Vercel).
 
